@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+option go_package = "/jobRPC";
+
+service JobTimer {
+    rpc Add (Input) returns (Response) {}
+}
+
+message Input {
+    string JsonData = 1;
+}
+
+message Response {
+    int32 Status = 1;
+}
