@@ -1,4 +1,4 @@
-package config
+package gcron
 
 import (
 	"github.com/getsentry/raven-go"
@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+var isLoad = false
 var (
 	Server = struct {
 		Host string
@@ -30,7 +31,10 @@ var (
 )
 
 // 加载配置信息
-func Load() {
+func LoadConfig() {
+	if isLoad {
+		return
+	}
 	h, err := ini.Load("config.ini")
 	if err != nil {
 		log.Fatalf("%v", err)
@@ -45,6 +49,7 @@ func Load() {
 			log.Fatalln("Sentry错误", err.Error())
 		}
 	}
+	isLoad = true
 }
 
 func mapTo(h *ini.File, section string, v interface{}) {

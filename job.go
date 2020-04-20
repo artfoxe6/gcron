@@ -7,8 +7,6 @@ import (
 	"github.com/gomodule/redigo/redis"
 	"io"
 	"log"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -18,10 +16,10 @@ type Job struct {
 	Url      string                 //请求地质
 	Method   string                 //请求方法
 	Header   map[string]string      //自定义header
+	TTL      int64                  //任务能忍受的超时时间
 }
 
 type JobManager struct {
-	lock         *Lock
 	InBuffer     chan []byte
 	HandleBuffer chan string
 }
@@ -34,7 +32,6 @@ func NewJobManager() *JobManager {
 		return jobManagerInstance
 	}
 	jobManagerInstance = &JobManager{
-		lock:         &Lock{},
 		InBuffer:     make(chan []byte, 1000),
 		HandleBuffer: make(chan string, 1000),
 	}
@@ -42,9 +39,9 @@ func NewJobManager() *JobManager {
 		for {
 			select {
 			case jobData := <-jobManagerInstance.InBuffer:
-				jobManagerInstance.insertJob(jobData)
+				go jobManagerInstance.insertJob(jobData)
 			case execTime := <-jobManagerInstance.HandleBuffer:
-				jobManagerInstance.handle(execTime)
+				go jobManagerInstance.handle(execTime)
 			default:
 				time.Sleep(time.Second * 2)
 			}
@@ -62,6 +59,12 @@ func (tm *JobManager) insertJob(jobdata []byte) {
 	RedisInstance().Do("sadd", job.ExecTime, h.Sum(nil), jobdata)
 }
 
+//重试
+func (tm *JobManager) retry(execTime string) {
+	time.Sleep(time.Second * 10)
+	tm.HandleBuffer <- execTime
+}
+
 //任务进入通道
 func (tm *JobManager) Add(jsonData string) {
 	job := Job{}
@@ -73,40 +76,41 @@ func (tm *JobManager) Add(jsonData string) {
 }
 
 //执行任务
+//execTime: time[_retry_count]
 func (tm *JobManager) handle(execTime string) {
-	key := strings.Split(execTime, "_")
-	ok := tm.lock.Lock(key[0])
-	if !ok {
-		if len(key) > 1 {
-			reTryCount, _ := strconv.Atoi(key[1])
-			if reTryCount > 10 {
-				log.Println("key:" + key[0] + "尝试10次获取锁失败")
-			} else {
-				tm.HandleBuffer <- execTime + strconv.Itoa(reTryCount+1)
-			}
-		} else {
-			tm.HandleBuffer <- execTime
-		}
+	num, err := redis.Int64(RedisInstance().Do("scard", execTime))
+	if err != nil {
+		log.Println("发送到sentry")
 		return
 	}
-	defer tm.lock.Unlock(key[0])
-	num, err := redis.Int64(RedisInstance().Do("scard", execTime))
-	if err == nil {
-		//如果集合中超过1000个任务，需要分段获取
-		if num > 1000 {
-			for {
-				num -= 1000
-				values, err := redis.Values(RedisInstance().Do("srandmember", execTime, 1000))
-				if err != nil {
-					return
-				}
-				for _, job := range values {
-					go HandleJob(job.([]byte))
-				}
-				if num <= 0 {
-					break
-				}
-			}
+	defer func() {
+		if err := recover(); err == nil {
+			RedisInstance().Do("del", execTime)
+		}
+	}()
+	//如果集合中超过1000个任务，采用分段获取
+	if num < 1000 {
+		values, err := redis.Values(RedisInstance().Do("smembers", execTime))
+		if err != nil {
+			log.Println("发送到sentry")
+			return
+		}
+		for _, job := range values {
+			go HandleJob(job.([]byte))
+		}
+	}
+	for {
+		num -= 1000
+		values, err := redis.Values(RedisInstance().Do("srandmember", execTime, 1000))
+		if err != nil {
+			log.Println("发送到sentry")
+			return
+		}
+		for _, job := range values {
+			go HandleJob(job.([]byte))
+		}
+		if num <= 0 {
+			break
 		}
 	}
 
@@ -121,7 +125,10 @@ func HandleJob(jobdata []byte) {
 		log.Println("数据格式错误")
 		return
 	}
-
+	if (job.TTL + job.ExecTime) < time.Now().Unix() {
+		log.Println("任务超时，发送到sentry")
+		return
+	}
 	h := httpData(jobdata)
 	h.SendHttp()
 }

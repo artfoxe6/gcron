@@ -1,33 +1,24 @@
 package main
 
 import (
-	"gcron"
-	"gcron/config"
-	"gcron/rpcService"
-	"os"
-	"os/signal"
-	"syscall"
+	"fmt"
+	"time"
 )
 
-type Test struct {
-	Name string
-	//Height int
-	//Sex    string
-}
-
 func main() {
-	config.Load()
-	go func() {
-		rpcService.Run()
-	}()
-	scheduler := gcron.NewScheduler()
-	scheduler.Start()
-
-	quit := make(chan os.Signal, 1)
-
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	scheduler.Stop <- 1
-	rpcService.Stop()
-
+	for i := 0; i < 10; i++ {
+		go func() {
+			Print(i)
+		}()
+	}
+	for i := 0; i < 10; i++ {
+		go func() {
+			Print(i)
+		}()
+	}
+	time.Sleep(time.Second * 10)
+}
+func Print(num int) {
+	time.Sleep(time.Second * time.Duration(num))
+	fmt.Println(num)
 }

@@ -1,7 +1,6 @@
 package gcron
 
 import (
-	"gcron/config"
 	"github.com/gomodule/redigo/redis"
 	"log"
 	"time"
@@ -11,7 +10,7 @@ var isLoad = false
 var redisPool *redis.Pool
 
 func createRedisPool() {
-	cache := config.Redis
+	cache := Redis
 	redisPool = &redis.Pool{
 		Dial: func() (con redis.Conn, err error) {
 			con, err = redis.Dial("tcp", cache.Host,
