@@ -44,6 +44,7 @@ func startTestHttpServer(stop, start chan int) {
 }
 
 func TestSendHttp(t *testing.T) {
+	t.Skip()
 	fmt.Println("-------------TestSendHttp-------------")
 	stop := make(chan int)
 	start := make(chan int)

@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-var isLoad = false
+var configIsLoad = false
 var (
 	Server = struct {
 		Host string
@@ -32,7 +32,7 @@ var (
 
 // 加载配置信息
 func LoadConfig() {
-	if isLoad {
+	if configIsLoad {
 		return
 	}
 	h, err := ini.Load("config.ini")
@@ -49,7 +49,7 @@ func LoadConfig() {
 			log.Fatalln("Sentry错误", err.Error())
 		}
 	}
-	isLoad = true
+	configIsLoad = true
 }
 
 func mapTo(h *ini.File, section string, v interface{}) {

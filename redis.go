@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-var isLoad = false
+var redisIsLoad = false
 var redisPool *redis.Pool
 
 func createRedisPool() {
@@ -30,11 +30,11 @@ func createRedisPool() {
 		Wait:            true,
 		MaxConnLifetime: 0,
 	}
-	isLoad = true
+	redisIsLoad = true
 }
 
 func RedisInstance() redis.Conn {
-	if !isLoad {
+	if !redisIsLoad {
 		createRedisPool()
 	}
 	return redisPool.Get()

@@ -1,7 +1,7 @@
 package gcron
 
 import (
-	"strconv"
+	"fmt"
 	"time"
 )
 
@@ -9,14 +9,12 @@ type Scheduler struct {
 	Ticker     *time.Ticker
 	Stop       chan int
 	JobManager *JobManager
-	locker     *Lock
 }
 
 //创建一个调度器
 func NewScheduler() *Scheduler {
 	s := &Scheduler{
 		JobManager: NewJobManager(),
-		locker:     &Lock{},
 	}
 	return s
 }
@@ -29,7 +27,7 @@ func (s *Scheduler) Start() {
 		for {
 			select {
 			case <-s.Ticker.C:
-				s.AppendHandleBuffer()
+				s.JobManager.HandleBuffer <- fmt.Sprint(time.Now().Unix())
 			case <-s.Stop:
 				s.Ticker.Stop()
 			}
@@ -40,12 +38,15 @@ func (s *Scheduler) Start() {
 }
 
 //分布式环境下，每秒只有一个调度器能够获取到调度机会
-func (s *Scheduler) AppendHandleBuffer() {
-	execTime := strconv.Itoa(int(time.Now().Unix()))
-	lockKey := "scheduler_" + execTime
-	ok := s.locker.Lock(lockKey)
-	if ok {
-		s.JobManager.HandleBuffer <- execTime
-		s.locker.Unlock(lockKey)
-	}
-}
+//func (s *Scheduler) AppendHandleBuffer() {
+//	execTime := strconv.Itoa(int(time.Now().Unix()))
+//	lockKey := "scheduler_" + execTime
+//	ok := s.locker.Lock(lockKey)
+//	if ok {
+//		fmt.Println("获取锁成功")
+//		s.JobManager.HandleBuffer <- execTime
+//		s.locker.Unlock(lockKey)
+//	} else {
+//		fmt.Println("获取锁失败")
+//	}
+//}

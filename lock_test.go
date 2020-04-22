@@ -8,6 +8,7 @@ import (
 )
 
 func TestLock(t *testing.T) {
+	t.Skip()
 	fmt.Println("-------------TestLock-------------")
 	LoadConfig()
 	p := make(chan int, 10)
