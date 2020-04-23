@@ -19,7 +19,7 @@ var (
 		LocalPath string
 		SentryUrl string
 	}{}
-	Redis = struct {
+	RedisConfig = struct {
 		Host        string
 		Password    string
 		MaxIdle     int
@@ -27,6 +27,10 @@ var (
 		IdleTimeout time.Duration
 		Db          int
 		Timeout     int
+	}{}
+	EtcdConfig = struct {
+		Host    string
+		Timeout int
 	}{}
 )
 
@@ -41,7 +45,8 @@ func LoadConfig() {
 	}
 	mapTo(h, "server", &Server)
 	mapTo(h, "errLog", &ErrLog)
-	mapTo(h, "redis", &Redis)
+	mapTo(h, "redis", &RedisConfig)
+	mapTo(h, "etcd", &EtcdConfig)
 
 	if strings.ToUpper(ErrLog.Type) == "SENTRY" && ErrLog.Open == 1 {
 		err := raven.SetDSN(ErrLog.SentryUrl)

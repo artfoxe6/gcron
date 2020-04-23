@@ -10,7 +10,7 @@ var redisIsLoad = false
 var redisPool *redis.Pool
 
 func createRedisPool() {
-	cache := Redis
+	cache := RedisConfig
 	redisPool = &redis.Pool{
 		Dial: func() (con redis.Conn, err error) {
 			con, err = redis.Dial("tcp", cache.Host,
