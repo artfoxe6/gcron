@@ -15,15 +15,15 @@ import (
 type httpData []byte
 
 //发送http请求
-func (h httpData) SendHttp() ([]byte,error) {
+func (h httpData) SendHttp() ([]byte, error) {
 	job := Job{}
 
 	err := json.Unmarshal(h, &job)
 	if err != nil {
-		return nil,errors.New("任务格式解析错误")
+		return nil, errors.New("任务格式解析错误")
 	}
-	if job.ExecTime == 0 || job.Url == "" || job.Method == "" {
-		return nil,errors.New("参数至少包含 ExecTime,Method,Url")
+	if job.At == 0 || job.Url == "" || job.Method == "" {
+		return nil, errors.New("参数至少包含 ExecTime,Method,Url")
 	}
 	return h.send(&job)
 }
@@ -67,23 +67,23 @@ func (h *httpData) getClient(job *Job) (*http.Client, *http.Request, error) {
 	return client, request, nil
 }
 
-func (h *httpData) send(job *Job) ([]byte,error) {
+func (h *httpData) send(job *Job) ([]byte, error) {
 	client, request, err := h.getClient(job)
 	if err != nil {
-		return nil,err
+		return nil, err
 	}
 	resp, err := client.Do(request)
 	if err != nil {
-		return nil,err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil,err
+		return nil, err
 	}
 	if resp.StatusCode == 200 {
-		return body,nil
+		return body, nil
 	}
-	return nil,errors.New(strconv.Itoa(resp.StatusCode))
+	return nil, errors.New(strconv.Itoa(resp.StatusCode))
 }

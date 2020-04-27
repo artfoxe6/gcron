@@ -8,6 +8,7 @@ import (
 )
 
 func BenchmarkRedisZset(b *testing.B) {
+	b.Skip()
 	LoadConfig()
 	redis := RedisInstance()
 	rand.Seed(time.Now().UnixNano())

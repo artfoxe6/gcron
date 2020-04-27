@@ -51,7 +51,7 @@ func TestSendHttp(t *testing.T) {
 	go startTestHttpServer(stop, start)
 	<-start
 	job := Job{
-		ExecTime: time.Now().Unix(),
+		At: time.Now().Unix(),
 		Args: map[string]interface{}{
 			"user_id": "12",
 		},
