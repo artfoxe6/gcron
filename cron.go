@@ -94,87 +94,136 @@ func (cm *CronManager) Add(cronRule, taskJson string) error {
 	return nil
 }
 
-//任务列表
-func (cm *CronManager) List() []*Task {
-	return cm.Tasks
+//时间点变更记录
+type change struct {
+	month  int
+	day    int
+	hour   int
+	minute int
+}
+
+//下一个执行时间点
+type nextAt struct {
+	year   int
+	month  int
+	day    int
+	hour   int
+	minute int
+	week   int
+}
+
+func (t *Task) nextMonth(now time.Time, change *change, nextAt *nextAt, nextNum int) {
+	current := int(now.Month())
+	if !existsInArray(t.Month, current) {
+		change.month = 1
+		nextAt.month = getMinValueInArray(t.Month, current)
+	} else {
+		if nextNum == 0 {
+			nextAt.month = current
+		} else {
+			change.month = 1
+			nextAt.month = getMinValueInArray(t.Month, current)
+		}
+	}
+}
+func (t *Task) nextDay(now time.Time, change *change, nextAt *nextAt, nextNum int) {
+	current := now.Day()
+	if change.month == 1 {
+		nextAt.day = t.Dom[0]
+		change.day = 1
+	} else {
+		if !existsInArray(t.Dom, current) {
+			nextAt.day = getMinValueInArray(t.Dom, current)
+			change.day = 1
+		} else {
+			if nextNum == 0 {
+				nextAt.day = current
+			} else {
+				nextAt.day = getMinValueInArray(t.Dom, current)
+				change.day = 1
+			}
+		}
+		if nextAt.day < current {
+			t.nextMonth(now, change, nextAt, 1)
+		}
+	}
+}
+func (t *Task) nextHour(now time.Time, change *change, nextAt *nextAt, nextNum int) {
+	current := now.Hour()
+	if change.day == 1 {
+		nextAt.hour = t.Hour[0]
+		change.hour = 1
+	} else {
+		if !existsInArray(t.Hour, current) {
+			nextAt.hour = getMinValueInArray(t.Hour, current)
+			change.hour = 1
+		} else {
+			if nextNum == 0 {
+				nextAt.hour = current
+			} else {
+				nextAt.hour = getMinValueInArray(t.Hour, current)
+				change.hour = 1
+			}
+		}
+		if nextAt.hour < current {
+			t.nextDay(now, change, nextAt, 1)
+		}
+	}
+}
+func (t *Task) nextMinute(now time.Time, change *change, nextAt *nextAt, nextNum int) {
+	current := now.Minute()
+	if change.hour == 1 {
+		nextAt.minute = t.Minute[0]
+	} else {
+		nextAt.minute = getMinValueInArray(t.Minute, current)
+		if nextAt.minute < current {
+			t.nextHour(now, change, nextAt, 1)
+		}
+	}
+}
+func (t *Task) nextWeek(now time.Time, change *change, nextAt *nextAt, nextNum int) {
+	current := int(now.Weekday())
+	//dom 是 *
+	if len(t.Dom) == 31 {
+
+	} else {
+
+	}
+	if change.month == 1 {
+		nextAt.day = t.Dom[0]
+		change.day = 1
+	} else {
+		if !existsInArray(t.Dom, current) {
+			nextAt.day = getMinValueInArray(t.Dom, current)
+			change.day = 1
+		} else {
+			if nextNum == 0 {
+				nextAt.day = current
+			} else {
+				nextAt.day = getMinValueInArray(t.Dom, current)
+				change.day = 1
+			}
+		}
+		if nextAt.day < current {
+			t.nextMonth(now, change, nextAt, 1)
+		}
+	}
 }
 
 func (t *Task) ComputeNextRunAt(current time.Time) string {
 	now := current.In(time.FixedZone(t.LocationName, t.LocationOffset))
-	next := struct {
-		year   int
-		month  int
-		day    int
-		hour   int
-		minute int
-		week   int
-	}{
-		year:  now.Year(),
-		month: int(now.Month()),
-		day:   now.Day(),
-		hour:  now.Hour(),
-		week:  int(now.Weekday()),
-	}
-	change := struct {
-		month  int
-		day    int
-		hour   int
-		minute int
-	}{}
-	var (
-		month  = int(now.Month())
-		week   = int(now.Weekday())
-		day    = now.Day()
-		hour   = now.Hour()
-		minute = now.Minute()
-	)
-	//next month
-	if !existsInArray(t.Month, month) {
-		next.month = getMinValueInArray(t.Month, month)
-		change.month = 1
-	}
-	//todo  和日 or关系
-	//next week
-	if !existsInArray(t.Dow, week) {
-		//nextWeek := getMinWeekInArray(t.Dow, week)
-		//nowCopy =  nowCopy.AddDate(0, 0, nextWeek-week)
-	}
-	//todo  和周 or关系,
-	// next day
-	if change.month == 1 {
-		next.day = t.Dom[0]
-		change.day = 1
-	} else {
-		if !existsInArray(t.Dom, day) {
-			next.day = getMinValueInArray(t.Dom, day)
-			change.day = 1
-		}
-	}
-	//next hour
-	if change.day == 1 {
-		next.hour = t.Hour[0]
-		change.hour = 1
-	} else {
-		if !existsInArray(t.Hour, hour) {
-			next.hour = getMinValueInArray(t.Hour, hour)
-			change.hour = 1
-		}
-	}
-	//next minute
-	if change.hour == 1 {
-		next.minute = t.Minute[0]
-	} else {
-		if !existsInArray(t.Minute, minute) {
-			next.minute = getMinValueInArray(t.Minute, minute)
-		}
-	}
 
-	res := time.Date(next.year, time.Month(next.month), next.day, next.hour, next.minute, 0, 0, now.Location())
-	currentReally := time.Now().In(time.FixedZone(t.LocationName, t.LocationOffset))
-	if res.Unix() < currentReally.Unix() {
-		//需要条件回归
-		fmt.Println("error")
-	}
+	var (
+		change = &change{}
+		nextAt = &nextAt{}
+	)
+
+	t.nextMonth(now, change, nextAt, 0)
+	t.nextDay(now, change, nextAt, 0)
+	t.nextHour(now, change, nextAt, 0)
+	t.nextMinute(now, change, nextAt, 0)
+
+	res := time.Date(now.Year(), time.Month(nextAt.month), nextAt.day, nextAt.hour, nextAt.minute, 0, 0, now.Location())
 	fmt.Println("周", t.Dow)
 	fmt.Println("月", t.Month)
 	fmt.Println("日", t.Dom)
