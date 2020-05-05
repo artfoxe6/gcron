@@ -49,13 +49,13 @@ func NewCronManager() *CronManager {
 }
 
 //添加任务
-func (cm *CronManager) Add(cronRule, taskJson string, locationOffset int) error {
+func (cm *CronManager) Add(cronRule, taskJson string) error {
 	var err error
 	taskData := TaskData{}
 	err = json.Unmarshal([]byte(taskJson), &taskData)
-	if err != nil {
-		return errors.New("任务格式错误")
-	}
+	//if err != nil {
+	//	return errors.New("任务格式错误")
+	//}
 	ruleItems := strings.Split(cronRule, " ")
 	if len(ruleItems) != 5 {
 		return errors.New("cron规则格式错误")
@@ -66,7 +66,8 @@ func (cm *CronManager) Add(cronRule, taskJson string, locationOffset int) error 
 		NextRunAt:      nil,
 		ExecTimes:      0,
 		TaskData:       taskData,
-		LocationOffset: locationOffset,
+		LocationOffset: 8 * 3600,
+		LocationName:   "CST",
 	}
 	task.Minute, err = cronRuleParse(ruleItems[0], []int{0, 59})
 	if err != nil {
@@ -76,19 +77,19 @@ func (cm *CronManager) Add(cronRule, taskJson string, locationOffset int) error 
 	if err != nil {
 		return errors.New("小时" + err.Error())
 	}
-	task.Dom, err = cronRuleParse(ruleItems[2], []int{0, 23})
+	task.Dom, err = cronRuleParse(ruleItems[2], []int{1, 31})
 	if err != nil {
 		return errors.New("日(月)" + err.Error())
 	}
-	task.Month, err = cronRuleParse(ruleItems[3], []int{0, 23})
+	task.Month, err = cronRuleParse(ruleItems[3], []int{1, 12})
 	if err != nil {
 		return errors.New("月" + err.Error())
 	}
-	task.Dow, err = cronRuleParse(ruleItems[4], []int{0, 23})
+	task.Dow, err = cronRuleParse(ruleItems[4], []int{0, 6})
 	if err != nil {
 		return errors.New("周(月)" + err.Error())
 	}
-	fmt.Println(task.ComputeNextRunAt())
+	fmt.Println(task.ComputeNextRunAt(time.Now()))
 	//cm.Tasks = append(cm.Tasks, task)
 	return nil
 }
@@ -98,9 +99,28 @@ func (cm *CronManager) List() []*Task {
 	return cm.Tasks
 }
 
-func (t *Task) ComputeNextRunAt() string {
-	now := time.Now().In(time.FixedZone(t.LocationName, t.LocationOffset))
-	nowCopy := now
+func (t *Task) ComputeNextRunAt(current time.Time) string {
+	now := current.In(time.FixedZone(t.LocationName, t.LocationOffset))
+	next := struct {
+		year   int
+		month  int
+		day    int
+		hour   int
+		minute int
+		week   int
+	}{
+		year:  now.Year(),
+		month: int(now.Month()),
+		day:   now.Day(),
+		hour:  now.Hour(),
+		week:  int(now.Weekday()),
+	}
+	change := struct {
+		month  int
+		day    int
+		hour   int
+		minute int
+	}{}
 	var (
 		month  = int(now.Month())
 		week   = int(now.Weekday())
@@ -108,49 +128,57 @@ func (t *Task) ComputeNextRunAt() string {
 		hour   = now.Hour()
 		minute = now.Minute()
 	)
-	//当前月份不在规则中
+	//next month
 	if !existsInArray(t.Month, month) {
-		nextMonth := getMinValueInArray(t.Month, month)
-		if nextMonth > month {
-			nowCopy.AddDate(0, nextMonth-month, 0)
-		} else {
-			nowCopy.AddDate(0, nextMonth+12-month, 0)
-		}
+		next.month = getMinValueInArray(t.Month, month)
+		change.month = 1
 	}
-	//当前周(月)不在规则中
 	//todo  和日 or关系
+	//next week
 	if !existsInArray(t.Dow, week) {
-		nextWeek := getMinWeekInArray(t.Dow, week)
-		nowCopy.AddDate(0, 0, nextWeek-week)
+		//nextWeek := getMinWeekInArray(t.Dow, week)
+		//nowCopy =  nowCopy.AddDate(0, 0, nextWeek-week)
 	}
-	//当前日(月)不在规则中
-	//todo  和周 or关系,, 还可能存在条件超越父级
-	if !existsInArray(t.Dom, day) {
-		nextDay := getMinValueInArray(t.Dom, day)
-		if nextDay > day {
-			nowCopy.AddDate(0, 0, nextDay-day)
-		} else {
-			currentMonthHasDays := getCurrentMonthHasDays(t.LocationName, t.LocationOffset)
-			nowCopy.AddDate(0, 0, nextDay+(currentMonthHasDays)-day)
+	//todo  和周 or关系,
+	// next day
+	if change.month == 1 {
+		next.day = t.Dom[0]
+		change.day = 1
+	} else {
+		if !existsInArray(t.Dom, day) {
+			next.day = getMinValueInArray(t.Dom, day)
+			change.day = 1
 		}
 	}
-	//当前小时不在规则中
-	if !existsInArray(t.Hour, hour) {
-		nextHour := getMinValueInArray(t.Hour, hour)
-		if nextHour > hour {
-			nowCopy.Add(time.Duration(nextHour-hour) * time.Second * 3600)
-		} else {
-			nowCopy.Add(time.Duration(nextHour+24-hour) * time.Second * 3600)
+	//next hour
+	if change.day == 1 {
+		next.hour = t.Hour[0]
+		change.hour = 1
+	} else {
+		if !existsInArray(t.Hour, hour) {
+			next.hour = getMinValueInArray(t.Hour, hour)
+			change.hour = 1
 		}
 	}
-	//当前分钟不在规则中
-	if !existsInArray(t.Minute, minute) {
-		nextMinute := getMinValueInArray(t.Minute, minute)
-		if nextMinute > minute {
-			nowCopy.Add(time.Duration(nextMinute-minute) * time.Second * 60)
-		} else {
-			nowCopy.Add(time.Duration(nextMinute+60-minute) * time.Second * 60)
+	//next minute
+	if change.hour == 1 {
+		next.minute = t.Minute[0]
+	} else {
+		if !existsInArray(t.Minute, minute) {
+			next.minute = getMinValueInArray(t.Minute, minute)
 		}
 	}
-	return nowCopy.Format("2006-01-02 15:04:05")
+
+	res := time.Date(next.year, time.Month(next.month), next.day, next.hour, next.minute, 0, 0, now.Location())
+	currentReally := time.Now().In(time.FixedZone(t.LocationName, t.LocationOffset))
+	if res.Unix() < currentReally.Unix() {
+		//需要条件回归
+		fmt.Println("error")
+	}
+	fmt.Println("周", t.Dow)
+	fmt.Println("月", t.Month)
+	fmt.Println("日", t.Dom)
+	fmt.Println("时", t.Hour)
+	fmt.Println("分", t.Minute)
+	return res.Format("2006-01-02 15:04:05")
 }

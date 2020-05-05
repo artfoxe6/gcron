@@ -43,7 +43,7 @@ var (
 
 //从规则中解析出范围内符合的数字
 func cronRuleParse(str string, limit []int) ([]int, error) {
-	limitList := numberList[limit[0]:limit[1]]
+	limitList := numberList[limit[0] : limit[1]+1]
 	// "*"
 	if b, _ := regexp.MatchString(`^\*$`, str); b {
 		return limitList, nil
@@ -60,31 +60,28 @@ func cronRuleParse(str string, limit []int) ([]int, error) {
 	// "1,2,3,30"
 	if b, _ := regexp.MatchString(`^(\d{1,2},)+\d{1,2}$`, str); b {
 		arr := strings.Split(str, ",")
-		temp := make([]int, len(arr))
+		temp := make([]int, 0)
 		for i := 0; i < len(arr); i++ {
 			temp = append(temp, numberMaps[arr[i]])
 		}
+		sort.Ints(temp)
 		return temp, nil
 	}
-	// "*/10"
+	// "*/3"
 	if b, _ := regexp.MatchString(`^\*/\d{1,2}$`, str); b {
 		arr := strings.Split(str, "/")
-		temp := make([]int, 1)
-		for _, v := range limitList {
-			if v%numberMaps[arr[1]] == 0 {
-				temp = append(temp, numberMaps[arr[1]])
-			}
+		temp := make([]int, 0)
+		for i := 0; i < len(limitList); i += numberMaps[arr[1]] {
+			temp = append(temp, limitList[i])
 		}
 		return temp, nil
 	}
 	// "3-10/3"
 	if b, _ := regexp.MatchString(`^\d{1,2}-\d{1,2}/\d{1,2}$`, str); b {
 		arr := strings.Split(str, "/")
-		temp := make([]int, 1)
-		for _, v := range limitList {
-			if v%numberMaps[arr[1]] == 0 {
-				temp = append(temp, numberMaps[arr[1]])
-			}
+		temp := make([]int, 0)
+		for i := 0; i < len(limitList); i += numberMaps[arr[1]] {
+			temp = append(temp, limitList[i])
 		}
 		subArr := strings.Split(arr[0], "-")
 		for k, v := range temp {

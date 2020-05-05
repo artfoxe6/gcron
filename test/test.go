@@ -1,21 +1,18 @@
 package main
 
-//var b bool
+import (
+	"fmt"
+	"gcron"
+)
 
 func main() {
+	cm := gcron.NewCronManager()
+	cm.Add("0 0,12 1 */2 *", "123")
+	fmt.Println("2020-07-01 00:00:00")
 
-	//b, _ = regexp.MatchString(`^(\d{1,2},)+\d{1,2}/\d{1,2}$`, "1,2,30/3")
-	//fmt.Println(b)
-	//b, _ = regexp.MatchString(`^\d{1,2}-\d{1,2}/\d{1,2}$`, "3-10/3")
-	//fmt.Println(b)
-	//b, _ = regexp.MatchString(`^\*/\d{1,2}$`, "*/10")
-	//fmt.Println(b)
-	//b, _ = regexp.MatchString(`^(\d{1,2},)+\d{1,2}$`, "1,2,3,30")
-	//fmt.Println(b)
-	//b, _ = regexp.MatchString(`^\d{1,2}-\d{1,2}$`, "1-12")
-	//fmt.Println(b)
-	//b, _ = regexp.MatchString(`^\d{1,2}$`, "10")
-	//fmt.Println(b)
-	//b, _ = regexp.MatchString(`^\*$`, "*")
-	//fmt.Println(b)
+	//t1 := time.Now()
+	//t1.AddDate(0, 3, 0)
+	//fmt.Println(t1.Year())
+
+	//fmt.Println(0 | 0 | 0)
 }
