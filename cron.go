@@ -8,8 +8,9 @@ import (
 	"time"
 )
 
-//linux下crontab的golang实现
-
+//标准的crontab的golang实现,不支持 @everyday...等扩展语法
+//如果dom日(月) 和 dow周(月)都不为*, 那么任何一方出现 / 每隔语法,两者关系变为且,否则为或
+//参考 https://crontab.guru/
 type Task struct {
 	Minute         []int      //分 规则
 	Hour           []int      //时 规则
@@ -23,6 +24,7 @@ type Task struct {
 	TaskData       TaskData   //任务数据
 	LocationOffset int        //当前时区与UTC的偏移秒数
 	LocationName   string     //当前时区名
+	CronRule       string     //原始的cron规则
 }
 
 //具体任务内容
@@ -68,6 +70,7 @@ func (cm *CronManager) Add(cronRule, taskJson string) error {
 		TaskData:       taskData,
 		LocationOffset: 8 * 3600,
 		LocationName:   "CST",
+		CronRule:       cronRule,
 	}
 	task.Minute, err = cronRuleParse(ruleItems[0], []int{0, 59})
 	if err != nil {
@@ -125,6 +128,7 @@ func (t *Task) nextMonth(now time.Time, change *change, nextAt *nextAt, nextNum 
 			nextAt.month = getMinValueInArray(t.Month, current)
 		}
 	}
+	t.nextWeek(now, change, nextAt)
 }
 func (t *Task) nextDay(now time.Time, change *change, nextAt *nextAt, nextNum int) {
 	current := now.Day()
@@ -181,31 +185,14 @@ func (t *Task) nextMinute(now time.Time, change *change, nextAt *nextAt, nextNum
 		}
 	}
 }
-func (t *Task) nextWeek(now time.Time, change *change, nextAt *nextAt, nextNum int) {
-	current := int(now.Weekday())
-	//dom 是 *
-	if len(t.Dom) == 31 {
-
-	} else {
-
-	}
-	if change.month == 1 {
-		nextAt.day = t.Dom[0]
-		change.day = 1
-	} else {
-		if !existsInArray(t.Dom, current) {
-			nextAt.day = getMinValueInArray(t.Dom, current)
-			change.day = 1
+func (t *Task) nextWeek(now time.Time, change *change, nextAt *nextAt) {
+	ruleItems := strings.Split(t.CronRule, " ")
+	if ruleItems[4] != "*" {
+		days := getDayByWeek(now.Year(), nextAt.month, t.Dow, t.LocationName, t.LocationOffset)
+		if ruleItems[2] == "*" {
+			t.Dom = days
 		} else {
-			if nextNum == 0 {
-				nextAt.day = current
-			} else {
-				nextAt.day = getMinValueInArray(t.Dom, current)
-				change.day = 1
-			}
-		}
-		if nextAt.day < current {
-			t.nextMonth(now, change, nextAt, 1)
+			t.Dom = append(t.Dom, days...)
 		}
 	}
 }

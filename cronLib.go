@@ -164,3 +164,17 @@ func isLeapYear(year int) bool {
 	}
 	return false
 }
+
+//通过当月的weekdays,计算出对等的days
+func getDayByWeek(year int, month int, weekdays []int, locationName string, locationOffset int) []int {
+	var days = make([]int, 0)
+	monthHasDay := getDayCountInMonth(year, month)
+	location := time.FixedZone(locationName, locationOffset)
+	for i := 1; i <= monthHasDay; i++ {
+		t := time.Date(year, time.Month(month), i, 0, 0, 0, 0, location)
+		if existsInArray(weekdays, int(t.Weekday())) {
+			days = append(days, i)
+		}
+	}
+	return days
+}
