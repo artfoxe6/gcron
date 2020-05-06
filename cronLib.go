@@ -178,3 +178,30 @@ func getDayByWeek(year int, month int, weekdays []int, locationName string, loca
 	}
 	return days
 }
+
+//两个切片的交集
+func arrayIntersect(a, b []int) []int {
+	res := make([]int, 0)
+	for _, v := range a {
+		if existsInArray(b, v) {
+			res = append(res, v)
+		}
+	}
+	return res
+}
+
+//两个切片的并集
+func arrayMerge(a, b []int) []int {
+	res := make([]int, 0)
+	for _, v := range a {
+		if !existsInArray(res, v) {
+			res = append(res, v)
+		}
+	}
+	for _, v := range b {
+		if !existsInArray(res, v) {
+			res = append(res, v)
+		}
+	}
+	return res
+}

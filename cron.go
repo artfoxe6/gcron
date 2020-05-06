@@ -38,6 +38,15 @@ type TaskData struct {
 	Desc            string                 //任务描述
 }
 
+//规则键位
+const (
+	MinuteKey = iota
+	HourKey
+	DomKey
+	MonthKey
+	DowKey
+)
+
 //任务管理
 type CronManager struct {
 	Tasks []*Task
@@ -72,23 +81,23 @@ func (cm *CronManager) Add(cronRule, taskJson string) error {
 		LocationName:   "CST",
 		CronRule:       cronRule,
 	}
-	task.Minute, err = cronRuleParse(ruleItems[0], []int{0, 59})
+	task.Minute, err = cronRuleParse(ruleItems[MinuteKey], []int{0, 59})
 	if err != nil {
 		return errors.New("分钟" + err.Error())
 	}
-	task.Hour, err = cronRuleParse(ruleItems[1], []int{0, 23})
+	task.Hour, err = cronRuleParse(ruleItems[HourKey], []int{0, 23})
 	if err != nil {
 		return errors.New("小时" + err.Error())
 	}
-	task.Dom, err = cronRuleParse(ruleItems[2], []int{1, 31})
+	task.Dom, err = cronRuleParse(ruleItems[DomKey], []int{1, 31})
 	if err != nil {
 		return errors.New("日(月)" + err.Error())
 	}
-	task.Month, err = cronRuleParse(ruleItems[3], []int{1, 12})
+	task.Month, err = cronRuleParse(ruleItems[MonthKey], []int{1, 12})
 	if err != nil {
 		return errors.New("月" + err.Error())
 	}
-	task.Dow, err = cronRuleParse(ruleItems[4], []int{0, 6})
+	task.Dow, err = cronRuleParse(ruleItems[DowKey], []int{0, 6})
 	if err != nil {
 		return errors.New("周(月)" + err.Error())
 	}
@@ -185,15 +194,19 @@ func (t *Task) nextMinute(now time.Time, change *change, nextAt *nextAt, nextNum
 		}
 	}
 }
+
+//todo: dom 交集并集
 func (t *Task) nextWeek(now time.Time, change *change, nextAt *nextAt) {
 	ruleItems := strings.Split(t.CronRule, " ")
-	if ruleItems[4] != "*" {
-		days := getDayByWeek(now.Year(), nextAt.month, t.Dow, t.LocationName, t.LocationOffset)
-		if ruleItems[2] == "*" {
-			t.Dom = days
-		} else {
-			t.Dom = append(t.Dom, days...)
-		}
+	if ruleItems[DowKey] == "*" {
+		return
+	}
+	//dom和dow任意一个存在 间隔符 / 将形成交集
+	days := getDayByWeek(now.Year(), nextAt.month, t.Dow, t.LocationName, t.LocationOffset)
+	if strings.ContainsRune(ruleItems[DowKey], '/') || strings.ContainsRune(ruleItems[DomKey], '/') {
+		t.Dom = arrayIntersect(t.Dom, days)
+	} else {
+		t.Dom = arrayMerge(t.Dom, days)
 	}
 }
 
