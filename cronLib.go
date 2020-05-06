@@ -55,7 +55,7 @@ func cronRuleParse(str string, limit []int) ([]int, error) {
 	// "1-12"
 	if b, _ := regexp.MatchString(`^\d{1,2}-\d{1,2}$`, str); b {
 		arr := strings.Split(str, "-")
-		return numberList[numberMaps[arr[0]]:numberMaps[arr[1]]], nil
+		return numberList[numberMaps[arr[0]] : numberMaps[arr[1]]+1], nil
 	}
 	// "1,2,3,30"
 	if b, _ := regexp.MatchString(`^(\d{1,2},)+\d{1,2}$`, str); b {

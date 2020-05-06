@@ -15,6 +15,7 @@ type Task struct {
 	Minute         []int      //分 规则
 	Hour           []int      //时 规则
 	Dom            []int      //日 规则
+	DomCopy        []int      //日 规则拷贝
 	Month          []int      //月 规则
 	Dow            []int      //周 规则
 	JoinAt         time.Time  //任务添加时间
@@ -93,6 +94,8 @@ func (cm *CronManager) Add(cronRule, taskJson string) error {
 	if err != nil {
 		return errors.New("日(月)" + err.Error())
 	}
+	task.DomCopy = make([]int, len(task.Dom))
+	_ = copy(task.DomCopy, task.Dom)
 	task.Month, err = cronRuleParse(ruleItems[MonthKey], []int{1, 12})
 	if err != nil {
 		return errors.New("月" + err.Error())
@@ -101,7 +104,7 @@ func (cm *CronManager) Add(cronRule, taskJson string) error {
 	if err != nil {
 		return errors.New("周(月)" + err.Error())
 	}
-	fmt.Println(task.ComputeNextRunAt(time.Now()))
+	task.ComputeNextRunAt(time.Now(), 5)
 	//cm.Tasks = append(cm.Tasks, task)
 	return nil
 }
@@ -124,79 +127,111 @@ type nextAt struct {
 	week   int
 }
 
-func (t *Task) nextMonth(now time.Time, change *change, nextAt *nextAt, nextNum int) {
+func (t *Task) nextMonth(now time.Time, change *change, nextAt *nextAt, jump *string) bool {
+	change.month = 0
+	change.day = 0
+	change.hour = 0
+	change.minute = 0
+	nextAt.year = now.Year()
 	current := int(now.Month())
-	if !existsInArray(t.Month, current) {
+	if *jump == "month" {
 		change.month = 1
 		nextAt.month = getMinValueInArray(t.Month, current)
+		if nextAt.month <= current {
+			nextAt.year += 1
+		}
 	} else {
-		if nextNum == 0 {
-			nextAt.month = current
-		} else {
-			change.month = 1
+		nextAt.month = current
+		if !existsInArray(t.Month, current) {
 			nextAt.month = getMinValueInArray(t.Month, current)
+			change.month = 1
 		}
 	}
-	t.nextWeek(now, change, nextAt)
+	t.Dom = make([]int, len(t.DomCopy))
+	_ = copy(t.Dom, t.DomCopy)
+	t.weekToDay(now, change, nextAt)
+	return true
 }
-func (t *Task) nextDay(now time.Time, change *change, nextAt *nextAt, nextNum int) {
+func (t *Task) nextDay(now time.Time, change *change, nextAt *nextAt, jump *string) bool {
 	current := now.Day()
-	if change.month == 1 {
-		nextAt.day = t.Dom[0]
-		change.day = 1
-	} else {
-		if !existsInArray(t.Dom, current) {
-			nextAt.day = getMinValueInArray(t.Dom, current)
-			change.day = 1
-		} else {
-			if nextNum == 0 {
-				nextAt.day = current
-			} else {
-				nextAt.day = getMinValueInArray(t.Dom, current)
+	if *jump != "day" {
+		if change.month == 1 {
+			nextAt.day = t.Dom[0]
+			if nextAt.day != current {
 				change.day = 1
 			}
+			return true
 		}
-		if nextAt.day < current {
-			t.nextMonth(now, change, nextAt, 1)
-		}
-	}
-}
-func (t *Task) nextHour(now time.Time, change *change, nextAt *nextAt, nextNum int) {
-	current := now.Hour()
-	if change.day == 1 {
-		nextAt.hour = t.Hour[0]
-		change.hour = 1
-	} else {
-		if !existsInArray(t.Hour, current) {
-			nextAt.hour = getMinValueInArray(t.Hour, current)
-			change.hour = 1
+		if !existsInArray(t.Dom, current) {
+			nextAt.day = getMinValueInArray(t.Dom, current)
+			if nextAt.day < current {
+				*jump = "month"
+				return false
+			}
+			if nextAt.day != current {
+				change.day = 1
+			}
 		} else {
-			if nextNum == 0 {
-				nextAt.hour = current
-			} else {
-				nextAt.hour = getMinValueInArray(t.Hour, current)
+			nextAt.day = current
+		}
+	} else {
+		nextAt.day = getMinValueInArray(t.Dom, current)
+		if nextAt.day <= current {
+			*jump = "month"
+			return false
+		}
+		change.day = 1
+	}
+	return true
+}
+func (t *Task) nextHour(now time.Time, change *change, nextAt *nextAt, jump *string) bool {
+	current := now.Hour()
+	if *jump != "hour" {
+		if change.day == 1 || change.month == 1 {
+			nextAt.hour = t.Hour[0]
+			if nextAt.hour != current {
 				change.hour = 1
 			}
+			return true
 		}
-		if nextAt.hour < current {
-			t.nextDay(now, change, nextAt, 1)
+		if !existsInArray(t.Hour, current) {
+			nextAt.hour = getMinValueInArray(t.Hour, current)
+			if nextAt.hour < current {
+				*jump = "day"
+				return false
+			}
+			if nextAt.hour != current {
+				change.hour = 1
+			}
+		} else {
+			nextAt.hour = current
 		}
+	} else {
+		nextAt.hour = getMinValueInArray(t.Hour, current)
+		if nextAt.hour <= current {
+			*jump = "day"
+			return false
+		}
+		change.hour = 1
 	}
+	return true
 }
-func (t *Task) nextMinute(now time.Time, change *change, nextAt *nextAt, nextNum int) {
+func (t *Task) nextMinute(now time.Time, change *change, nextAt *nextAt, jump *string) bool {
 	current := now.Minute()
-	if change.hour == 1 {
+	if change.hour == 1 || change.day == 1 || change.month == 1 {
 		nextAt.minute = t.Minute[0]
 	} else {
 		nextAt.minute = getMinValueInArray(t.Minute, current)
-		if nextAt.minute < current {
-			t.nextHour(now, change, nextAt, 1)
+		if nextAt.minute <= current {
+			*jump = "hour"
+			return false
 		}
 	}
+	return true
 }
 
-//todo: dom 交集并集
-func (t *Task) nextWeek(now time.Time, change *change, nextAt *nextAt) {
+//dow转dom
+func (t *Task) weekToDay(now time.Time, change *change, nextAt *nextAt) {
 	ruleItems := strings.Split(t.CronRule, " ")
 	if ruleItems[DowKey] == "*" {
 		return
@@ -206,28 +241,50 @@ func (t *Task) nextWeek(now time.Time, change *change, nextAt *nextAt) {
 	if strings.ContainsRune(ruleItems[DowKey], '/') || strings.ContainsRune(ruleItems[DomKey], '/') {
 		t.Dom = arrayIntersect(t.Dom, days)
 	} else {
-		t.Dom = arrayMerge(t.Dom, days)
+		if ruleItems[DomKey] != "*" {
+			t.Dom = arrayMerge(t.Dom, days)
+		} else {
+			t.Dom = days
+		}
+
 	}
 }
 
-func (t *Task) ComputeNextRunAt(current time.Time) string {
+//计算下一个执行日期
+func (t *Task) ComputeNextRunAt(current time.Time, nextNum int) string {
 	now := current.In(time.FixedZone(t.LocationName, t.LocationOffset))
-
+	//now, _ := time.ParseInLocation("2006-01-02 15:04:05", "2020-05-07 22:00:00",
+	//	time.FixedZone(t.LocationName, t.LocationOffset))
 	var (
 		change = &change{}
 		nextAt = &nextAt{}
 	)
+	//当前周期的上一个周期是否需要跳跃
+	var jump = ""
+	t.Recursive(now, change, nextAt, &jump)
+	res := time.Date(nextAt.year, time.Month(nextAt.month), nextAt.day, nextAt.hour, nextAt.minute, 0, 0, now.Location())
+	//fmt.Println("周", t.Dow)
+	//fmt.Println("月", t.Month)
+	//fmt.Println("日", t.Dom)
+	//fmt.Println("时", t.Hour)
+	//fmt.Println("分", t.Minute)
+	fmt.Println(res.Format("2006-01-02 15:04:05"))
+	if nextNum == 1 {
+		return ""
+	}
+	return t.ComputeNextRunAt(res, nextNum-1)
+}
 
-	t.nextMonth(now, change, nextAt, 0)
-	t.nextDay(now, change, nextAt, 0)
-	t.nextHour(now, change, nextAt, 0)
-	t.nextMinute(now, change, nextAt, 0)
-
-	res := time.Date(now.Year(), time.Month(nextAt.month), nextAt.day, nextAt.hour, nextAt.minute, 0, 0, now.Location())
-	fmt.Println("周", t.Dow)
-	fmt.Println("月", t.Month)
-	fmt.Println("日", t.Dom)
-	fmt.Println("时", t.Hour)
-	fmt.Println("分", t.Minute)
-	return res.Format("2006-01-02 15:04:05")
+//计算下一个日期
+func (t *Task) Recursive(current time.Time, change *change, at *nextAt, jump *string) {
+	t.nextMonth(current, change, at, jump)
+	if b := t.nextDay(current, change, at, jump); !b {
+		t.Recursive(current, change, at, jump)
+	}
+	if b := t.nextHour(current, change, at, jump); !b {
+		t.Recursive(current, change, at, jump)
+	}
+	if b := t.nextMinute(current, change, at, jump); !b {
+		t.Recursive(current, change, at, jump)
+	}
 }
