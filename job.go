@@ -11,14 +11,18 @@ import (
 )
 
 type Job struct {
-	At     int64                  //执行时间单位秒
-	Args   map[string]interface{} //请求参数
-	Url    string                 //请求地址
-	Method string                 //请求方法
-	Header map[string]string      //自定义header
-	TTL    int64                  //任务能忍受的超时时间
-	UUID   string                 //任务唯一标识
-	Desc   string                 //任务描述
+	Type           int                    //执行类型 1 定时任务  2 延时任务
+	CronExpr       string                 //cron 表达式
+	At             int64                  //执行时间单位秒
+	Args           map[string]interface{} //请求参数
+	Url            string                 //请求地址
+	Method         string                 //请求方法
+	Header         map[string]string      //自定义header
+	TTL            int64                  //任务能忍受的超时时间
+	UUID           string                 //任务唯一标识
+	Desc           string                 //任务描述
+	LocationName   string                 //时区
+	LocationOffset int                    //和UTC的偏差多少秒
 }
 
 type JobManager struct {
