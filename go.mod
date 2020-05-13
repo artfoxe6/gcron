@@ -9,5 +9,6 @@ require (
 	github.com/gomodule/redigo v2.0.0+incompatible
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/smartystreets/goconvey v1.6.4 // indirect
+	go.mongodb.org/mongo-driver v1.3.3
 	gopkg.in/ini.v1 v1.55.0 // indirect
 )

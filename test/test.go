@@ -1,16 +1,37 @@
 package main
 
-import "gcron"
+import (
+	"context"
+	"fmt"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"time"
+)
 
 func main() {
-
-	cm := gcron.NewCronManager()
-	cm.Add("0 0 1,15 * 3", "123")
-	//t := time.Date(2020, 9, 1, 0, 0, 0, 0, time.Local)
-	//fmt.Println(t.Format("2006-01-02 15:04:05"))
-	//t1 := time.Now()
-	//t1.AddDate(0, 3, 0)
-	//fmt.Println(t1.Year())
-
-	//fmt.Println(0 | 0 | 0)
+	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	client, err := mongo.Connect(
+		ctx,
+		options.Client().
+			ApplyURI("mongodb://localhost:27017").
+			SetAuth(options.Credential{
+				Username: "admin",
+				Password: "123456",
+			}))
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+	err = client.Ping(ctx, readpref.Primary())
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+	collection := client.Database("cron_log").Collection("test1")
+	_, err = collection.InsertOne(ctx, bson.M{"name": "pi", "value": 3.14159})
+	if err != nil {
+		fmt.Println(err.Error())
+	}
 }

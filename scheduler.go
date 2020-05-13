@@ -1,10 +1,10 @@
 package gcron
 
 import (
-	"fmt"
 	"time"
 )
 
+//调度器
 type Scheduler struct {
 	Ticker     *time.Ticker
 	Stop       chan int
@@ -21,13 +21,16 @@ func NewScheduler() *Scheduler {
 
 //开始调度
 func (s *Scheduler) Start() {
-
+	s.JobManager.StartHandleJob()
 	s.Ticker = time.NewTicker(time.Second)
 	go func() {
 		for {
 			select {
 			case <-s.Ticker.C:
-				s.JobManager.HandleBuffer <- fmt.Sprint(time.Now().Unix())
+				//每一分钟触发一次任务调度
+				if time.Now().Second() == 0 {
+					s.JobManager.WaitHandle <- time.Now().Unix()
+				}
 			case <-s.Stop:
 				s.Ticker.Stop()
 			}
@@ -36,17 +39,3 @@ func (s *Scheduler) Start() {
 
 	<-s.Stop
 }
-
-//分布式环境下，每秒只有一个调度器能够获取到调度机会
-//func (s *Scheduler) AppendHandleBuffer() {
-//	execTime := strconv.Itoa(int(time.Now().Unix()))
-//	lockKey := "scheduler_" + execTime
-//	ok := s.locker.Lock(lockKey)
-//	if ok {
-//		fmt.Println("获取锁成功")
-//		s.JobManager.HandleBuffer <- execTime
-//		s.locker.Unlock(lockKey)
-//	} else {
-//		fmt.Println("获取锁失败")
-//	}
-//}

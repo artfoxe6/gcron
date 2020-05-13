@@ -15,15 +15,15 @@ import (
 type httpData []byte
 
 //发送http请求
-func (h httpData) SendHttp() ([]byte, error) {
-	job := Job{}
+func (h httpData) SendHttp() ([]byte, int, error) {
+	job := CronJob{}
 
 	err := json.Unmarshal(h, &job)
 	if err != nil {
-		return nil, errors.New("任务格式解析错误")
+		return nil, 400, errors.New("任务格式解析错误")
 	}
-	if job.At == 0 || job.Url == "" || job.Method == "" {
-		return nil, errors.New("参数至少包含 ExecTime,Method,Url")
+	if job.Url == "" || job.Method == "" {
+		return nil, 400, errors.New("参数至少包含 Method,Url")
 	}
 	return h.send(&job)
 }
@@ -40,7 +40,7 @@ func parseArgs(args map[string]interface{}) url.Values {
 }
 
 //初始化client,request
-func (h *httpData) getClient(job *Job) (*http.Client, *http.Request, error) {
+func (h *httpData) getClient(job *CronJob) (*http.Client, *http.Request, error) {
 	params := parseArgs(job.Args)
 	var request *http.Request
 	var err error
@@ -67,23 +67,24 @@ func (h *httpData) getClient(job *Job) (*http.Client, *http.Request, error) {
 	return client, request, nil
 }
 
-func (h *httpData) send(job *Job) ([]byte, error) {
+//发送http请求
+func (h *httpData) send(job *CronJob) ([]byte, int, error) {
 	client, request, err := h.getClient(job)
 	if err != nil {
-		return nil, err
+		return nil, 400, err
 	}
 	resp, err := client.Do(request)
 	if err != nil {
-		return nil, err
+		return nil, 400, err
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, 400, err
 	}
 	if resp.StatusCode == 200 {
-		return body, nil
+		return body, 200, nil
 	}
-	return nil, errors.New(strconv.Itoa(resp.StatusCode))
+	return nil, 400, errors.New(strconv.Itoa(resp.StatusCode))
 }

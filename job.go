@@ -1,148 +1,106 @@
 package gcron
 
 import (
-	"crypto/md5"
 	"encoding/json"
-	"fmt"
 	"github.com/gomodule/redigo/redis"
-	"io"
 	"log"
 	"time"
 )
 
-type Job struct {
-	Type           int                    //执行类型 1 定时任务  2 延时任务
-	CronExpr       string                 //cron 表达式
-	At             int64                  //执行时间单位秒
-	Args           map[string]interface{} //请求参数
-	Url            string                 //请求地址
-	Method         string                 //请求方法
-	Header         map[string]string      //自定义header
+//定时任务
+type CronJob struct {
+	CronExpr       string                 //定时任务cron表达式
+	LastRunAt      int64                  //上次执行时间点 单位时间戳
+	NextRunAt      int64                  //下次执行时间点 单位时间戳
 	TTL            int64                  //任务能忍受的超时时间
 	UUID           string                 //任务唯一标识
 	Desc           string                 //任务描述
 	LocationName   string                 //时区
 	LocationOffset int                    //和UTC的偏差多少秒
+	Args           map[string]interface{} //请求参数
+	Url            string                 //请求地址
+	Method         string                 //请求方法
+	Header         map[string]string      //自定义header
 }
 
+//任务管理
 type JobManager struct {
-	InBuffer     chan []byte
-	HandleBuffer chan string
-	Locker       *Lock
+	WaitHandle chan int64 //由调度器派发的任务队列
+	Locker     *Lock
+	Processing []map[string]string //当前正在处理的任务列表
 }
-
-var jobManager *JobManager
 
 //创建一个任务管理器
 func NewJobManager() *JobManager {
-	if jobManager != nil {
-		return jobManager
+	return &JobManager{
+		WaitHandle: make(chan int64, 1000),
+		Locker:     &Lock{},
+		Processing: make([]map[string]string, 0),
 	}
-	jobManager = &JobManager{
-		InBuffer:     make(chan []byte, 1000),
-		HandleBuffer: make(chan string, 1000),
-		Locker:       &Lock{},
-	}
-	go func() {
-		for {
-			select {
-			case jobData := <-jobManager.InBuffer:
-				go jobManager.insertJob(jobData)
-			case currentTime := <-jobManager.HandleBuffer:
-				go jobManager.scheduling(currentTime)
-			default:
-				time.Sleep(time.Second * 2)
-			}
-		}
-	}()
-	return jobManager
 }
 
-//把任务插入到redis中
-func (jm *JobManager) insertJob(jobdata []byte) {
-	job := Job{}
-	_ = json.Unmarshal(jobdata, &job)
-	h := md5.New()
-	_, _ = io.WriteString(h, string(jobdata))
-	RedisInstance().Do("sadd", job.At, h.Sum(nil), jobdata)
-}
-
-//重试
-func (jm *JobManager) retry(execTime string) {
-	time.Sleep(time.Second * 10)
-	jm.HandleBuffer <- execTime
-}
-
-//任务进入通道
-func (jm *JobManager) Add(jsonData string) {
-	job := Job{}
-	err := json.Unmarshal([]byte(jsonData), &job)
-	if err != nil {
-		fmt.Println("参数格式不符合 map[string]interface{}")
-	}
-	jm.InBuffer <- []byte(jsonData)
-}
-
-//执行任务
-//execTime: time[_retry_count]
-func (jm *JobManager) scheduling(currentTime string) {
-	lockKey := "scheduling_" + currentTime
-	ok := jm.Locker.Lock(lockKey)
-	//分布式环境下，只有获取到锁的节点能够处理任务
-	if !ok {
-		return
-	}
-	num, err := redis.Int64(RedisInstance().Do("scard", currentTime))
-	if err != nil {
-		log.Println("发送到sentry")
-		return
-	}
-	defer func() {
-		if err := recover(); err == nil {
-			RedisInstance().Do("del", currentTime)
-		}
-	}()
-	//如果集合中超过1000个任务，采用分段获取
-	if num < 1000 {
-		values, err := redis.Values(RedisInstance().Do("smembers", currentTime))
-		if err != nil {
-			log.Println("发送到sentry")
-			return
-		}
-		for _, job := range values {
-			go HandleJob(job.([]byte))
-		}
-	}
+//启动任务处理
+func (jbm *JobManager) StartHandleJob() {
 	for {
-		num -= 1000
-		values, err := redis.Values(RedisInstance().Do("srandmember", currentTime, 1000))
-		if err != nil {
-			log.Println("发送到sentry")
-			return
-		}
-		for _, job := range values {
-			go HandleJob(job.([]byte))
-		}
-		if num <= 0 {
-			break
+		select {
+		case scheduleTime := <-jbm.WaitHandle:
+			go func(scheduleTime int64) {
+				//以当前时间戳为score在zset中筛选任务uuid
+				uniqueIds, ok := jbm.FindJob(scheduleTime)
+				if ok {
+					for _, uniqueId := range uniqueIds {
+						//通过任务uuid去hash中查找任务的具体数据
+						job, yes := jbm.GetJobData(uniqueId)
+						if !yes {
+							continue
+						}
+						go job.Exec()
+					}
+				}
+			}(scheduleTime)
+		default:
+			time.Sleep(time.Second)
 		}
 	}
+}
 
+//查找任务标识 任务标识存在一个zset中,执行时间作为分数
+func (jbm *JobManager) FindJob(jobTime int64) ([]string, bool) {
+	uniqueIds, err := redis.Strings(RedisInstance().Do("ZRANGEBYSCORE", "test", 0, jobTime))
+	if err != nil {
+		return nil, false
+	}
+	if len(uniqueIds) == 0 {
+		return nil, false
+	}
+	return uniqueIds, true
+}
+
+//获取任务的具体数据  具体任务存在一个hash中
+func (jbm *JobManager) GetJobData(uniqueId string) (*CronJob, bool) {
+	jobString, err := redis.String(RedisInstance().Do("HGET", "test_hash", uniqueId))
+	if err != nil {
+		return nil, false
+	}
+	job := &CronJob{}
+	err = json.Unmarshal([]byte(jobString), job)
+	if err != nil {
+		return nil, false
+	}
+	return job, true
 }
 
 //执行任务
-func HandleJob(jobdata []byte) {
-	job := Job{}
-
-	err := json.Unmarshal(jobdata, &job)
+func (job *CronJob) Exec() {
+	if (job.NextRunAt + job.TTL) < time.Now().Unix() {
+		log.Println("任务超时，取消执行,并需记录日志")
+		return
+	}
+	jobByteData, err := json.Marshal(*job)
 	if err != nil {
-		log.Println("数据格式错误")
 		return
 	}
-	if (job.TTL + job.At) < time.Now().Unix() {
-		log.Println("任务超时，发送到sentry")
-		return
-	}
-	h := httpData(jobdata)
-	h.SendHttp()
+	h := httpData(jobByteData)
+	body, code, _ := h.SendHttp()
+	RunLog()
 }
