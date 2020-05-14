@@ -115,13 +115,13 @@ func connectMongodb() {
 }
 
 //记录任务执行日志
-func RunLog(log string) {
+func RunLog(statusCode int, log string) {
 	if !mongoIsConnection {
 		connectMongodb()
 	}
 	collection := mongoClient.Database(MongoDBConfig.Database).Collection(MongoDBConfig.RunLogCollection)
 	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	_, _ = collection.InsertOne(ctx, bson.M{"log": log, "at": time.Now().Format("2006-01-02 15:04:05")})
+	_, _ = collection.InsertOne(ctx, bson.M{"status_code": statusCode, "log": log, "at": time.Now().Format("2006-01-02 15:04:05")})
 }
 
 //记录程序错误日志

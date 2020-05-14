@@ -1,8 +1,6 @@
 package gcron
 
-import (
-	"github.com/gomodule/redigo/redis"
-)
+import "github.com/gomodule/redigo/redis"
 
 type Lock struct{}
 

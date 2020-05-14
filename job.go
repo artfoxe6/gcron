@@ -2,8 +2,10 @@ package gcron
 
 import (
 	"encoding/json"
+	"github.com/artfoxe6/cron_expression"
 	"github.com/gomodule/redigo/redis"
 	"log"
+	"sync"
 	"time"
 )
 
@@ -54,7 +56,7 @@ func (jbm *JobManager) StartHandleJob() {
 						if !yes {
 							continue
 						}
-						go job.Exec()
+						go jbm.Exec(job)
 					}
 				}
 			}(scheduleTime)
@@ -90,17 +92,55 @@ func (jbm *JobManager) GetJobData(uniqueId string) (*CronJob, bool) {
 	return job, true
 }
 
+var mutex sync.Mutex
+
 //执行任务
-func (job *CronJob) Exec() {
+func (jbm *JobManager) Exec(job *CronJob) {
 	if (job.NextRunAt + job.TTL) < time.Now().Unix() {
 		log.Println("任务超时，取消执行,并需记录日志")
 		return
 	}
+	if success := jbm.Locker.Lock(job.UUID); !success {
+		//获取锁失败,跳过,说明有其他线程正在处理该任务
+		return
+	}
+	defer jbm.Locker.Unlock(job.UUID)
 	jobByteData, err := json.Marshal(*job)
 	if err != nil {
+		ErrLog("任务的格式错误:" + job.UUID)
 		return
 	}
 	h := httpData(jobByteData)
 	body, code, _ := h.SendHttp()
-	RunLog()
+	RunLog(code, string(body))
+	//处理结束后重新计算任务的下次执行时间
+	expr := cron_expression.NewExpression(job.CronExpr, job.LocationName, job.LocationOffset)
+	dst := make([]string, 0)
+	err = expr.Next(time.Now(), 1, &dst)
+	if err != nil {
+		ErrLog("任务的下次执行时间计算出错" + job.UUID)
+		return
+	}
+	job.LastRunAt = job.NextRunAt
+	t, err := time.Parse("2006-01-02 15:04:05", dst[0])
+	if err != nil {
+		ErrLog("下次执行时间解析出错" + job.UUID)
+		return
+	}
+	job.NextRunAt = t.Unix()
+	_, err = RedisInstance().Do("ZADD", "test", job.NextRunAt, job.UUID)
+	if err != nil {
+		ErrLog("ZADD error" + job.UUID)
+		return
+	}
+	jobByte, err := json.Marshal(job)
+	if err != nil {
+		ErrLog("任务更新错误" + job.UUID)
+		return
+	}
+	_, err = RedisInstance().Do("HSET", "test_hash", job.UUID, string(jobByte))
+	if err != nil {
+		ErrLog("HSET error" + job.UUID)
+		return
+	}
 }

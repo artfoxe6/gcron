@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 )
 
 func startTestHttpServer(stop, start chan int) {
@@ -50,8 +49,7 @@ func TestSendHttp(t *testing.T) {
 	start := make(chan int)
 	go startTestHttpServer(stop, start)
 	<-start
-	job := Job{
-		At: time.Now().Unix(),
+	job := CronJob{
 		Args: map[string]interface{}{
 			"user_id": "12",
 		},
@@ -65,7 +63,7 @@ func TestSendHttp(t *testing.T) {
 	data, _ := json.Marshal(job)
 
 	hd := httpData([]byte(data))
-	body, err := hd.SendHttp()
+	body, _, err := hd.SendHttp()
 	if err != nil {
 		t.Error(err.Error())
 	}
