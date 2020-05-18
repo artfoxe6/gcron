@@ -3,35 +3,60 @@ package main
 import (
 	"context"
 	"fmt"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"github.com/coreos/etcd/clientv3"
+	"log"
 	"time"
 )
 
 func main() {
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	client, err := mongo.Connect(
-		ctx,
-		options.Client().
-			ApplyURI("mongodb://localhost:27017").
-			SetAuth(options.Credential{
-				Username: "admin",
-				Password: "123456",
-			}))
+	//StartNewNode(os.Args[1], os.Args[2:])
+	StartNewNode("localhost:9090", []string{"localhost:2379", "localhost:22379", "localhost:32379"})
+}
+
+type Node struct {
+	EtcdClient *clientv3.Client
+	Host       string
+}
+
+//启动一个节点
+func StartNewNode(host string, etcdNodes []string) {
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:   etcdNodes,
+		DialTimeout: 5 * time.Second,
+	})
 	if err != nil {
-		fmt.Println(err.Error())
-		return
+		log.Fatalln(err.Error())
 	}
-	err = client.Ping(ctx, readpref.Primary())
-	if err != nil {
-		fmt.Println(err.Error())
-		return
+	node := Node{
+		EtcdClient: cli,
+		Host:       host,
 	}
-	collection := client.Database("cron_log").Collection("test1")
-	_, err = collection.InsertOne(ctx, bson.M{"name": "pi", "value": 3.14159})
+	node.applyLease()
+}
+
+//注册到etcd
+func (node *Node) registerEtcd() {}
+
+//申请租约
+func (node *Node) applyLease() {
+	ctx, _ := context.WithTimeout(context.Background(), time.Second*3)
+	resp, err := node.EtcdClient.Get(ctx, "foo")
 	if err != nil {
-		fmt.Println(err.Error())
+		log.Fatalln(err.Error())
+	}
+	for _, ev := range resp.Kvs {
+		fmt.Printf("%s : %s\n", ev.Key, ev.Value)
 	}
 }
+
+//续租
+func (node *Node) updateLease() {}
+
+//监听master
+func (node *Node) listenMaster() {}
+
+//竞选master
+func (node *Node) electMaster() {}
+
+//开启rpc
+func (node *Node) startRpc() {}
