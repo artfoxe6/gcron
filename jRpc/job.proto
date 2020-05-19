@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+option go_package = ".;jRpc";
+//任务传输
+service JobTransfer {
+  rpc Transfer (stream Request) returns (stream Response) {}
+}
+//传输参数任务id
+message Request {
+  string host = 1;
+}
+//返回状态 1成功 0失败
+message Response {
+  int64 jobId = 1;
+}
