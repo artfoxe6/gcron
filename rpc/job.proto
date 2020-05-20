@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-option go_package = ".;jRpc";
+option go_package = ".;job_rpc";
 //任务传输
 service JobTransfer {
   rpc Transfer (stream Request) returns (stream Response) {}

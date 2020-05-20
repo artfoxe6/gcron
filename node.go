@@ -3,7 +3,7 @@ package gcron
 import (
 	"context"
 	"fmt"
-	"gcron/jRpc"
+	"gcron/rpc"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/coreos/etcd/mvcc/mvccpb"
@@ -31,7 +31,7 @@ type Node struct {
 	LeaderHost string
 	IsLeader   bool
 	NodePrefix string
-	RpcServer  *jRpc.RpcServer
+	RpcServer  *job_rpc.RpcServer
 	Ticker     *time.Ticker
 	JobManager *JobManager
 }
@@ -185,11 +185,11 @@ func (node *Node) startRpc() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 	s := grpc.NewServer()
-	node.RpcServer = &jRpc.RpcServer{
-		UnimplementedJobTransferServer: jRpc.UnimplementedJobTransferServer{},
+	node.RpcServer = &job_rpc.RpcServer{
+		UnimplementedJobTransferServer: job_rpc.UnimplementedJobTransferServer{},
 		ReadyJobChan:                   make(chan int64, 10000),
 	}
-	jRpc.RegisterJobTransferServer(s, node.RpcServer)
+	job_rpc.RegisterJobTransferServer(s, node.RpcServer)
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
@@ -201,7 +201,7 @@ func (node *Node) linkRpc() {
 	if err != nil {
 		log.Fatalf("connect error: %v", err)
 	}
-	client := jRpc.NewJobTransferClient(conn)
+	client := job_rpc.NewJobTransferClient(conn)
 	pipe, _ := client.Transfer(context.TODO())
 	//接收job
 	go func() {
@@ -223,7 +223,7 @@ func (node *Node) linkRpc() {
 		for {
 			time.Sleep(time.Second)
 			if len(node.JobManager.JobHandling) <= 100 {
-				_ = pipe.Send(&jRpc.Request{Host: node.Host})
+				_ = pipe.Send(&job_rpc.Request{Host: node.Host})
 			}
 		}
 	}()

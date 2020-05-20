@@ -1,4 +1,4 @@
-package jRpc
+package job_rpc
 
 import (
 	"io"
