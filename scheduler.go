@@ -21,7 +21,7 @@ func NewScheduler() *Scheduler {
 
 //开始调度
 func (s *Scheduler) Start() {
-	s.JobManager.StartHandleJob()
+	s.JobManager.Start()
 	s.Ticker = time.NewTicker(time.Second)
 	go func() {
 		for {

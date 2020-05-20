@@ -7,10 +7,12 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/coreos/etcd/mvcc/mvccpb"
+	"github.com/gomodule/redigo/redis"
 	"google.golang.org/grpc"
 	"io"
 	"log"
 	"net"
+	"strconv"
 	"time"
 )
 
@@ -30,6 +32,8 @@ type Node struct {
 	IsLeader   bool
 	NodePrefix string
 	RpcServer  *jRpc.RpcServer
+	Ticker     *time.Ticker
+	JobManager *JobManager
 }
 
 //启动一个节点
@@ -47,10 +51,12 @@ func StartNewNode(host string, etcdNodes []string) {
 		LeaseTTL:   1,
 		NodePrefix: "/nodes/",
 		LeaderKey:  "/leader",
+		JobManager: NewJobManager(),
 	}
 	//node.applyLeaseAndKeepAlive()
 	//node.registerEtcd()
 	node.listenLeader()
+	node.JobManager.Start()
 }
 
 //注册到etcd
@@ -181,7 +187,7 @@ func (node *Node) startRpc() {
 	s := grpc.NewServer()
 	node.RpcServer = &jRpc.RpcServer{
 		UnimplementedJobTransferServer: jRpc.UnimplementedJobTransferServer{},
-		WaitJobQueue:                   make(chan int64, 10000),
+		ReadyJobChan:                   make(chan int64, 10000),
 	}
 	jRpc.RegisterJobTransferServer(s, node.RpcServer)
 	if err := s.Serve(lis); err != nil {
@@ -189,38 +195,64 @@ func (node *Node) startRpc() {
 	}
 }
 
-//通过rpc发送一个任务到节点(如果当前非leader)
-func (node *Node) receiveRpcJob() {
+//连接到leader的Rpc服务获取任务(如果当前非leader)
+func (node *Node) linkRpc() {
 	conn, err := grpc.Dial(node.LeaderHost, grpc.WithInsecure())
 	if err != nil {
 		log.Fatalf("connect error: %v", err)
 	}
 	client := jRpc.NewJobTransferClient(conn)
-
 	pipe, _ := client.Transfer(context.TODO())
-	ch := make(chan int32, 10)
+	//接收job
 	go func() {
 		for {
-			resp4, err := pipe.Recv()
+			resp, err := pipe.Recv()
+			//端开重联
 			if err == io.EOF {
-				break
+				node.linkRpc()
+				return
 			}
 			if err != nil {
-				log.Fatalln(err.Error())
+				continue
 			}
-			ch <- resp4.C
+			node.JobManager.JobHandling <- resp.JobId
 		}
 	}()
+	//请求job
 	go func() {
-		for j := 1; j <= 10; j++ {
+		for {
 			time.Sleep(time.Second)
-			_ = doublePipe.Send(&pb.TwoNum{A: int32(j), B: int32(j + 1)})
+			if len(node.JobManager.JobHandling) <= 100 {
+				_ = pipe.Send(&jRpc.Request{Host: node.Host})
+			}
 		}
 	}()
-	for k := 0; k < 10; k++ {
-		fmt.Println("双向流： ", <-ch)
-	}
 }
 
-//开始调度(如果当前是leader)
-func (node *Node) startSchedule() {}
+//启动调度器(如果当前是leader)
+func (node *Node) startSchedule() {
+	node.Ticker = time.NewTicker(time.Second)
+	go func() {
+		for {
+			select {
+			case <-node.Ticker.C:
+				//每一分钟触发一次任务调度,将需要执行的任务id放到Rpc服务的ReadyJobChan通道中,等待节点来取
+				if time.Now().Second() == 0 {
+					unix := time.Now().Unix()
+					uniqueIds, err := redis.Strings(
+						RedisInstance().Do("ZRANGEBYSCORE", RedisConfig.Zset, 0, unix),
+					)
+					if err != nil || len(uniqueIds) == 0 {
+						continue
+					}
+					for _, jobId := range uniqueIds {
+						id, err := strconv.ParseInt(jobId, 10, 64)
+						if err == nil {
+							node.RpcServer.ReadyJobChan <- id
+						}
+					}
+				}
+			}
+		}
+	}()
+}

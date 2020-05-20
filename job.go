@@ -5,7 +5,6 @@ import (
 	"github.com/artfoxe6/cron_expression"
 	"github.com/gomodule/redigo/redis"
 	"log"
-	"sync"
 	"time"
 )
 
@@ -27,25 +26,23 @@ type CronJob struct {
 
 //任务管理
 type JobManager struct {
-	WaitHandle chan int64 //由调度器派发的任务队列
-	Locker     *Lock
-	Processing []map[string]string //当前正在处理的任务列表
+	JobHandling chan int64 //由调度器派发的任务队列
+	Locker      *Lock
 }
 
 //创建一个任务管理器
 func NewJobManager() *JobManager {
 	return &JobManager{
-		WaitHandle: make(chan int64, 1000),
-		Locker:     &Lock{},
-		Processing: make([]map[string]string, 0),
+		JobHandling: make(chan int64, 100),
+		Locker:      &Lock{},
 	}
 }
 
 //启动任务处理
-func (jbm *JobManager) StartHandleJob() {
+func (jbm *JobManager) Start() {
 	for {
 		select {
-		case scheduleTime := <-jbm.WaitHandle:
+		case scheduleTime := <-jbm.JobHandling:
 			go func(scheduleTime int64) {
 				//以当前时间戳为score在zset中筛选任务uuid
 				uniqueIds, ok := jbm.FindJob(scheduleTime)
@@ -91,8 +88,6 @@ func (jbm *JobManager) GetJobData(uniqueId string) (*CronJob, bool) {
 	}
 	return job, true
 }
-
-var mutex sync.Mutex
 
 //执行任务
 func (jbm *JobManager) Exec(job *CronJob) {

@@ -6,7 +6,7 @@ import (
 
 type RpcServer struct {
 	UnimplementedJobTransferServer
-	WaitJobQueue chan int64
+	ReadyJobChan chan int64
 }
 
 //传输任务,由leader节点分发给node节点
@@ -19,11 +19,11 @@ func (s *RpcServer) Transfer(pipe JobTransfer_TransferServer) error {
 		if err != nil {
 			return err
 		}
-		jobId := <-s.WaitJobQueue
+		jobId := <-s.ReadyJobChan
 		err = pipe.Send(&Response{JobId: jobId})
 		//如果发送失败,任务重新回到等待通道
 		if err != nil {
-			s.WaitJobQueue <- jobId
+			s.ReadyJobChan <- jobId
 		}
 	}
 }

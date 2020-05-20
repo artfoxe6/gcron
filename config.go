@@ -23,6 +23,8 @@ var (
 		IdleTimeout time.Duration
 		Db          int
 		Timeout     int
+		Zset        string
+		Hash        string
 	}{}
 	MongoDBConfig = struct {
 		Host             string
