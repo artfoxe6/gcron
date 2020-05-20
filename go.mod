@@ -3,7 +3,7 @@ module gcron
 go 1.14
 
 require (
-	github.com/artfoxe6/cron_expression v1.0.5 // indirect
+	github.com/artfoxe6/cron_expression v1.0.5
 	github.com/certifi/gocertifi v0.0.0-20200211180108-c7c1fbc02894 // indirect
 	github.com/coreos/etcd v3.3.20+incompatible
 	github.com/coreos/go-semver v0.3.0 // indirect

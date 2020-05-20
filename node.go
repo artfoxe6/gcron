@@ -16,16 +16,14 @@ import (
 	"time"
 )
 
-//func main() {
-//	//StartNewNode(os.Args[1], os.Args[2:])
-//	StartNewNode("localhost:9090", []string{"localhost:2379", "localhost:22379", "localhost:32379"})
-//}
-
+//服务节点
 type Node struct {
 	EtcdClient *clientv3.Client
 	//Host 用于rpc通讯
-	Host       string
-	LeaseId    clientv3.LeaseID
+	Host string
+	//租约id
+	LeaseId clientv3.LeaseID
+	//租约时间
 	LeaseTTL   int64
 	LeaderKey  string
 	LeaderHost string
@@ -37,6 +35,8 @@ type Node struct {
 }
 
 //启动一个节点
+//StartNewNode(os.Args[1], os.Args[2:])
+//StartNewNode("localhost:9090", []string{"localhost:2379", "localhost:22379", "localhost:32379"})
 func StartNewNode(host string, etcdNodes []string) {
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints:   etcdNodes,
@@ -53,14 +53,17 @@ func StartNewNode(host string, etcdNodes []string) {
 		LeaderKey:  "/leader",
 		JobManager: NewJobManager(),
 	}
-	//node.applyLeaseAndKeepAlive()
-	//node.registerEtcd()
-	node.listenLeader()
+	node.ApplyLeaseAndKeepAlive()
+	node.RegisterEtcd()
+	node.ListenLeader()
+	if node.IsLeader == false {
+		node.LinkRpc()
+	}
 	node.JobManager.Start()
 }
 
 //注册到etcd
-func (node *Node) registerEtcd() {
+func (node *Node) RegisterEtcd() {
 	key := node.NodePrefix + node.Host
 	value := fmt.Sprint(time.Now().Unix())
 	ctx, _ := context.WithTimeout(context.Background(), time.Second*3)
@@ -71,7 +74,7 @@ func (node *Node) registerEtcd() {
 }
 
 //申请一个租约,并开启自动续租
-func (node *Node) applyLeaseAndKeepAlive() {
+func (node *Node) ApplyLeaseAndKeepAlive() {
 	ctx, _ := context.WithTimeout(context.Background(), time.Second*3)
 	resp, err := node.EtcdClient.Grant(ctx, node.LeaseTTL)
 	if err != nil {
@@ -86,26 +89,26 @@ func (node *Node) applyLeaseAndKeepAlive() {
 }
 
 //监听leader
-func (node *Node) listenLeader() {
+func (node *Node) ListenLeader() {
 	//当前不存在leader,立即开始竞选leader
-	if node.existsLeader() == false {
-		node.electLeader()
+	if node.ExistsLeader() == false {
+		node.ElectLeader()
 		return
 	}
-	node.getLeaderHost()
+	node.GetLeaderHost()
 	rch := node.EtcdClient.Watch(context.TODO(), node.LeaderKey)
 	for wresp := range rch {
 		for _, ev := range wresp.Events {
 			//监听到leader失效,开始竞选leader
 			if ev.Type == mvccpb.DELETE {
-				node.electLeader()
+				node.ElectLeader()
 			}
 		}
 	}
 }
 
 //获取leader的host
-func (node *Node) getLeaderHost() {
+func (node *Node) GetLeaderHost() {
 	ctx, _ := context.WithTimeout(context.Background(), time.Second*3)
 	resp, err := node.EtcdClient.Get(ctx, node.LeaderKey)
 	if err != nil {
@@ -119,7 +122,7 @@ func (node *Node) getLeaderHost() {
 }
 
 //检查leader是否存在
-func (node *Node) existsLeader() bool {
+func (node *Node) ExistsLeader() bool {
 	ctx, _ := context.WithTimeout(context.Background(), time.Second*3)
 	resp, err := node.EtcdClient.Get(ctx, node.LeaderKey)
 	if err != nil {
@@ -132,7 +135,7 @@ func (node *Node) existsLeader() bool {
 }
 
 //竞选leader
-func (node *Node) electLeader() {
+func (node *Node) ElectLeader() {
 	s, err := concurrency.NewSession(node.EtcdClient)
 	if err != nil {
 		log.Fatal(err)
@@ -144,10 +147,10 @@ func (node *Node) electLeader() {
 		//竞争失败或超时
 		//检查当前是否存在leader,如果已存在,就放弃竞选
 		//不存在,继续发起竞选
-		if node.existsLeader() == true {
+		if node.ExistsLeader() == true {
 			return
 		} else {
-			node.electLeader()
+			node.ElectLeader()
 		}
 	} else {
 		//竞选成功,//将自己设置为leader
@@ -155,12 +158,16 @@ func (node *Node) electLeader() {
 		if err == nil {
 			node.IsLeader = true
 			node.LeaderHost = node.Host
+			node.StartRpc()
+			node.Schedule()
+			//停止任务执行
+			node.JobManager.Stop <- true
 		}
 	}
 }
 
 //获取可用节点
-func (node *Node) nodeList() []string {
+func (node *Node) NodeList() []string {
 	ctx, _ := context.WithTimeout(context.Background(), time.Second*3)
 	resp, err := node.EtcdClient.Get(ctx, node.NodePrefix, clientv3.WithPrefix())
 	if err != nil {
@@ -179,7 +186,7 @@ func (node *Node) nodeList() []string {
 }
 
 //启动rpc服务
-func (node *Node) startRpc() {
+func (node *Node) StartRpc() {
 	lis, err := net.Listen("tcp", node.Host)
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
@@ -196,7 +203,10 @@ func (node *Node) startRpc() {
 }
 
 //连接到leader的Rpc服务获取任务(如果当前非leader)
-func (node *Node) linkRpc() {
+func (node *Node) LinkRpc() {
+	if node.IsLeader {
+		return
+	}
 	conn, err := grpc.Dial(node.LeaderHost, grpc.WithInsecure())
 	if err != nil {
 		log.Fatalf("connect error: %v", err)
@@ -206,21 +216,27 @@ func (node *Node) linkRpc() {
 	//接收job
 	go func() {
 		for {
+			if node.IsLeader {
+				return
+			}
 			resp, err := pipe.Recv()
 			//端开重联
 			if err == io.EOF {
-				node.linkRpc()
+				node.LinkRpc()
 				return
 			}
-			if err != nil {
-				continue
+			if err == nil {
+				node.JobManager.JobHandling <- resp.JobId
 			}
-			node.JobManager.JobHandling <- resp.JobId
 		}
 	}()
 	//请求job
 	go func() {
 		for {
+			if node.IsLeader {
+				_ = pipe.CloseSend()
+				return
+			}
 			time.Sleep(time.Second)
 			if len(node.JobManager.JobHandling) <= 100 {
 				_ = pipe.Send(&job_rpc.Request{Host: node.Host})
@@ -230,7 +246,7 @@ func (node *Node) linkRpc() {
 }
 
 //启动调度器(如果当前是leader)
-func (node *Node) startSchedule() {
+func (node *Node) Schedule() {
 	node.Ticker = time.NewTicker(time.Second)
 	go func() {
 		for {
