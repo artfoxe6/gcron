@@ -256,7 +256,7 @@ func (node *Node) Schedule() {
 				if time.Now().Second() == 0 {
 					unix := time.Now().Unix()
 					uniqueIds, err := redis.Strings(
-						RedisInstance().Do("ZRANGEBYSCORE", RedisConfig.Zset, 0, unix),
+						RedisInstance().Do("ZRANGEBYSCORE", RedisConfig.JobMeta, 0, unix),
 					)
 					if err != nil || len(uniqueIds) == 0 {
 						continue
