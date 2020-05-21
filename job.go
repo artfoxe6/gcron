@@ -5,6 +5,7 @@ import (
 	"github.com/artfoxe6/cron_expression"
 	"github.com/gomodule/redigo/redis"
 	"log"
+	"strconv"
 	"time"
 )
 
@@ -34,7 +35,7 @@ type JobManager struct {
 //创建一个任务管理器
 func NewJobManager() *JobManager {
 	return &JobManager{
-		JobHandling: make(chan int64, 100),
+		JobHandling: make(chan int64, 1000),
 		Locker:      &Lock{},
 		Stop:        make(chan bool, 0),
 	}
@@ -44,6 +45,8 @@ func NewJobManager() *JobManager {
 func (jbm *JobManager) Start() {
 	for {
 		select {
+		case <-jbm.Stop:
+			return
 		case scheduleTime := <-jbm.JobHandling:
 			go func(scheduleTime int64) {
 				//以当前时间戳为score在zset中筛选任务id
@@ -59,10 +62,22 @@ func (jbm *JobManager) Start() {
 					}
 				}
 			}(scheduleTime)
-		case <-jbm.Stop:
-			return
 		default:
+			if len(jbm.JobHandling) <= 1000 {
+				jbm.GetAJob()
+			}
 			time.Sleep(time.Second)
+		}
+	}
+}
+
+//从redis中获取一个任务
+func (jbm *JobManager) GetAJob() {
+	jobId, err := redis.String(RedisInstance().Do("SPOP", RedisConfig.Ready))
+	if err == nil && jobId != "" {
+		id, err := strconv.ParseInt(jobId, 10, 64)
+		if err != nil {
+			jbm.JobHandling <- id
 		}
 	}
 }

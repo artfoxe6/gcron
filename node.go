@@ -3,16 +3,11 @@ package gcron
 import (
 	"context"
 	"fmt"
-	"gcron/rpc"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/coreos/etcd/mvcc/mvccpb"
 	"github.com/gomodule/redigo/redis"
-	"google.golang.org/grpc"
-	"io"
 	"log"
-	"net"
-	"strconv"
 	"time"
 )
 
@@ -29,9 +24,10 @@ type Node struct {
 	LeaderHost string
 	IsLeader   bool
 	NodePrefix string
-	RpcServer  *job_rpc.RpcServer
 	Ticker     *time.Ticker
 	JobManager *JobManager
+	//节点列表
+	NodeList []string
 }
 
 //启动一个节点
@@ -52,13 +48,13 @@ func StartNewNode(host string, etcdNodes []string) {
 		NodePrefix: "/nodes/",
 		LeaderKey:  "/leader",
 		JobManager: NewJobManager(),
+		NodeList:   make([]string, 0),
 	}
 	node.ApplyLeaseAndKeepAlive()
 	node.RegisterEtcd()
+	node.UpdateNodeList()
 	node.ListenLeader()
-	if node.IsLeader == false {
-		node.LinkRpc()
-	}
+	node.ListenNodeList()
 	node.JobManager.Start()
 }
 
@@ -103,6 +99,16 @@ func (node *Node) ListenLeader() {
 			if ev.Type == mvccpb.DELETE {
 				node.ElectLeader()
 			}
+		}
+	}
+}
+
+//监听节点列表
+func (node *Node) ListenNodeList() {
+	rch := node.EtcdClient.Watch(context.TODO(), node.NodePrefix, clientv3.WithPrefix())
+	for wresp := range rch {
+		if len(wresp.Events) > 0 {
+			node.UpdateNodeList()
 		}
 	}
 }
@@ -158,7 +164,6 @@ func (node *Node) ElectLeader() {
 		if err == nil {
 			node.IsLeader = true
 			node.LeaderHost = node.Host
-			node.StartRpc()
 			node.Schedule()
 			//停止任务执行
 			node.JobManager.Stop <- true
@@ -167,7 +172,7 @@ func (node *Node) ElectLeader() {
 }
 
 //获取可用节点
-func (node *Node) NodeList() []string {
+func (node *Node) UpdateNodeList() {
 	ctx, _ := context.WithTimeout(context.Background(), time.Second*3)
 	resp, err := node.EtcdClient.Get(ctx, node.NodePrefix, clientv3.WithPrefix())
 	if err != nil {
@@ -182,70 +187,11 @@ func (node *Node) NodeList() []string {
 			list = append(list, host)
 		}
 	}
-	return list
-}
-
-//启动rpc服务
-func (node *Node) StartRpc() {
-	lis, err := net.Listen("tcp", node.Host)
-	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
-	}
-	s := grpc.NewServer()
-	node.RpcServer = &job_rpc.RpcServer{
-		UnimplementedJobTransferServer: job_rpc.UnimplementedJobTransferServer{},
-		ReadyJobChan:                   make(chan int64, 10000),
-	}
-	job_rpc.RegisterJobTransferServer(s, node.RpcServer)
-	if err := s.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
-	}
-}
-
-//连接到leader的Rpc服务获取任务(如果当前非leader)
-func (node *Node) LinkRpc() {
-	if node.IsLeader {
-		return
-	}
-	conn, err := grpc.Dial(node.LeaderHost, grpc.WithInsecure())
-	if err != nil {
-		log.Fatalf("connect error: %v", err)
-	}
-	client := job_rpc.NewJobTransferClient(conn)
-	pipe, _ := client.Transfer(context.TODO())
-	//接收job
-	go func() {
-		for {
-			if node.IsLeader {
-				return
-			}
-			resp, err := pipe.Recv()
-			//端开重联
-			if err == io.EOF {
-				node.LinkRpc()
-				return
-			}
-			if err == nil {
-				node.JobManager.JobHandling <- resp.JobId
-			}
-		}
-	}()
-	//请求job
-	go func() {
-		for {
-			if node.IsLeader {
-				_ = pipe.CloseSend()
-				return
-			}
-			time.Sleep(time.Second)
-			if len(node.JobManager.JobHandling) <= 100 {
-				_ = pipe.Send(&job_rpc.Request{Host: node.Host})
-			}
-		}
-	}()
+	node.NodeList = list
 }
 
 //启动调度器(如果当前是leader)
+//从 redis-zset中获取执行时间已到的任务放到 redis-set 中
 func (node *Node) Schedule() {
 	node.Ticker = time.NewTicker(time.Second)
 	go func() {
@@ -255,18 +201,19 @@ func (node *Node) Schedule() {
 				//每一分钟触发一次任务调度,将需要执行的任务id放到Rpc服务的ReadyJobChan通道中,等待节点来取
 				if time.Now().Second() == 0 {
 					unix := time.Now().Unix()
-					uniqueIds, err := redis.Strings(
+					jobIds, err := redis.Strings(
 						RedisInstance().Do("ZRANGEBYSCORE", RedisConfig.JobMeta, 0, unix),
 					)
-					if err != nil || len(uniqueIds) == 0 {
+					if err != nil || len(jobIds) == 0 {
 						continue
 					}
-					for _, jobId := range uniqueIds {
-						id, err := strconv.ParseInt(jobId, 10, 64)
-						if err == nil {
-							node.RpcServer.ReadyJobChan <- id
-						}
+					args := make([]interface{}, 1)
+					args[0] = RedisConfig.Ready
+					for _, jobId := range jobIds {
+						args = append(args, jobId)
 					}
+					//将待执行任务放进 ready 集合
+					RedisInstance().Do("SADD", args...)
 				}
 			}
 		}
