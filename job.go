@@ -27,7 +27,7 @@ type CronJob struct {
 
 //任务管理
 type JobManager struct {
-	JobHandling chan int64 //由调度器派发的任务队列
+	JobHandling chan int64 //等待执行的任务
 	Locker      *Lock
 	Stop        chan bool
 }
@@ -35,67 +35,63 @@ type JobManager struct {
 //创建一个任务管理器
 func NewJobManager() *JobManager {
 	return &JobManager{
-		JobHandling: make(chan int64, 1000),
+		JobHandling: make(chan int64, 100),
 		Locker:      &Lock{},
 		Stop:        make(chan bool, 0),
 	}
 }
 
 //启动任务处理
+//当节点晋升为leader时,将关闭拉取任务,已经拉取的任务会继续执行完
 func (jbm *JobManager) Start() {
+	//一个协程负责拉取任务
+	go jbm.PullJob()
+	//一个协程负责处理任务
+	go jbm.DoJob()
+}
+
+func (jbm *JobManager) DoJob() {
 	for {
 		select {
-		case <-jbm.Stop:
-			return
-		case scheduleTime := <-jbm.JobHandling:
-			go func(scheduleTime int64) {
-				//以当前时间戳为score在zset中筛选任务id
-				jobIds, ok := jbm.FindJob(scheduleTime)
-				if ok {
-					for _, jobId := range jobIds {
-						//通过任务id去hash中查找任务的具体数据
-						job, yes := jbm.GetJobData(jobId)
-						if !yes {
-							continue
-						}
-						go jbm.Exec(job)
-					}
-				}
-			}(scheduleTime)
-		default:
-			if len(jbm.JobHandling) <= 1000 {
-				jbm.GetAJob()
+		case jobId := <-jbm.JobHandling:
+			//通过任务id去hash中查找任务的具体数据
+			job, ok := jbm.GetJobData(jobId)
+			if !ok {
+				continue
 			}
+			go jbm.Exec(job)
+		default:
 			time.Sleep(time.Second)
 		}
 	}
 }
 
 //从redis中获取一个任务
-func (jbm *JobManager) GetAJob() {
-	jobId, err := redis.String(RedisInstance().Do("SPOP", RedisConfig.Ready))
-	if err == nil && jobId != "" {
-		id, err := strconv.ParseInt(jobId, 10, 64)
-		if err != nil {
+//遇到错误或者暂时没有任务,就休息1秒钟,有任务的情况下持续拉取直到没有任务或者 JobHandling 装满
+func (jbm *JobManager) PullJob() {
+	for {
+		select {
+		case <-jbm.Stop:
+			return
+		default:
+			jobId, err := redis.String(RedisInstance().Do("SPOP", RedisConfig.Ready))
+			if err != nil || jobId == "" {
+				time.Sleep(time.Second)
+				continue
+			}
+			id, err := strconv.ParseInt(jobId, 10, 64)
+			if err != nil {
+				time.Sleep(time.Second)
+				continue
+			}
 			jbm.JobHandling <- id
 		}
 	}
-}
 
-//查找任务标识 任务标识存在一个zset中,执行时间作为分数
-func (jbm *JobManager) FindJob(jobTime int64) ([]string, bool) {
-	jobIds, err := redis.Strings(RedisInstance().Do("ZRANGEBYSCORE", "test", 0, jobTime))
-	if err != nil {
-		return nil, false
-	}
-	if len(jobIds) == 0 {
-		return nil, false
-	}
-	return jobIds, true
 }
 
 //获取任务的具体数据  具体任务存在一个hash中
-func (jbm *JobManager) GetJobData(jobId string) (*CronJob, bool) {
+func (jbm *JobManager) GetJobData(jobId int64) (*CronJob, bool) {
 	jobString, err := redis.String(RedisInstance().Do("HGET", "test_hash", jobId))
 	if err != nil {
 		return nil, false
@@ -106,6 +102,19 @@ func (jbm *JobManager) GetJobData(jobId string) (*CronJob, bool) {
 		return nil, false
 	}
 	return job, true
+}
+
+//计算任务的下一个执行时间点
+func (job *CronJob) CalculatorNextAt() (string, error) {
+	//处理结束后重新计算任务的下次执行时间
+	expr := cron_expression.NewExpression(job.CronExpr, job.LocationName, job.LocationOffset)
+	dst := make([]string, 0)
+	err := expr.Next(time.Now(), 1, &dst)
+	if err != nil {
+		ErrLog("任务的下次执行时间计算出错" + job.Id)
+		return "", err
+	}
+	return dst[0], nil
 }
 
 //执行任务

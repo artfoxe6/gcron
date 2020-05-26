@@ -207,12 +207,12 @@ func (node *Node) Schedule() {
 					if err != nil || len(jobIds) == 0 {
 						continue
 					}
+					//将待执行任务放进 ready 集合
 					args := make([]interface{}, 1)
 					args[0] = RedisConfig.Ready
 					for _, jobId := range jobIds {
 						args = append(args, jobId)
 					}
-					//将待执行任务放进 ready 集合
 					RedisInstance().Do("SADD", args...)
 				}
 			}
