@@ -2,6 +2,8 @@ cloud.google.com/go v0.26.0/go.mod h1:aQUYkXzVsufM+DwF1aE+0xfcU+56JwCaLick0ClmMT
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/artfoxe6/cron_expression v1.0.5 h1:0BMzEeTSWdB/7Q5QOHh0afzVnKLK0VzH6ONpyKkrHIM=
 github.com/artfoxe6/cron_expression v1.0.5/go.mod h1:D4ORglZkndH3SqGYGG/hDNrTUAKdyXh2iaQ2POo6MnQ=
+github.com/artfoxe6/cron_expression v1.1.0 h1:4qLDVwD22RCLTHbkZZHxl8MhYZ38ZEaqMebvAVytZA0=
+github.com/artfoxe6/cron_expression v1.1.0/go.mod h1:D4ORglZkndH3SqGYGG/hDNrTUAKdyXh2iaQ2POo6MnQ=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
 github.com/certifi/gocertifi v0.0.0-20200211180108-c7c1fbc02894 h1:JLaf/iINcLyjwbtTsCJjc6rtlASgHeIJPrB6QmwURnA=
 github.com/certifi/gocertifi v0.0.0-20200211180108-c7c1fbc02894/go.mod h1:sGbDF6GwGcLpkNXPUTkMRoywsNa/ol15pxFe6ERfguA=

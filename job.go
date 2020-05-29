@@ -6,13 +6,14 @@ import (
 	"github.com/gomodule/redigo/redis"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 )
 
 //定时任务
 type CronJob struct {
-	CronExpr       string                 //定时任务cron表达式
-	LastRunAt      int64                  //上次执行时间点 单位时间戳
+	CronExpr string //定时任务cron表达式
+	//LastRunAt      int64                  //上次执行时间点 单位时间戳
 	NextRunAt      int64                  //下次执行时间点 单位时间戳
 	TTL            int64                  //任务能忍受的超时时间
 	Id             string                 //任务唯一标识
@@ -27,7 +28,7 @@ type CronJob struct {
 
 //任务管理
 type JobManager struct {
-	JobHandling chan int64 //等待执行的任务
+	JobHandling chan string //等待执行的任务
 	Locker      *Lock
 	Stop        chan bool
 }
@@ -35,7 +36,7 @@ type JobManager struct {
 //创建一个任务管理器
 func NewJobManager() *JobManager {
 	return &JobManager{
-		JobHandling: make(chan int64, 100),
+		JobHandling: make(chan string, 100),
 		Locker:      &Lock{},
 		Stop:        make(chan bool, 0),
 	}
@@ -53,9 +54,9 @@ func (jbm *JobManager) Start() {
 func (jbm *JobManager) DoJob() {
 	for {
 		select {
-		case jobId := <-jbm.JobHandling:
+		case jobAndUnix := <-jbm.JobHandling:
 			//通过任务id去hash中查找任务的具体数据
-			job, ok := jbm.GetJobData(jobId)
+			job, ok := jbm.GetJobData(jobAndUnix)
 			if !ok {
 				continue
 			}
@@ -74,25 +75,25 @@ func (jbm *JobManager) PullJob() {
 		case <-jbm.Stop:
 			return
 		default:
-			jobId, err := redis.String(RedisInstance().Do("SPOP", RedisConfig.Ready))
-			if err != nil || jobId == "" {
+			jobAndUnix, err := redis.String(RedisInstance().Do("SPOP", RedisConfig.Ready))
+			if err != nil || jobAndUnix == "" {
 				time.Sleep(time.Second)
 				continue
 			}
-			id, err := strconv.ParseInt(jobId, 10, 64)
-			if err != nil {
-				time.Sleep(time.Second)
-				continue
-			}
-			jbm.JobHandling <- id
+			jbm.JobHandling <- jobAndUnix
 		}
 	}
 
 }
 
 //获取任务的具体数据  具体任务存在一个hash中
-func (jbm *JobManager) GetJobData(jobId int64) (*CronJob, bool) {
-	jobString, err := redis.String(RedisInstance().Do("HGET", "test_hash", jobId))
+func (jbm *JobManager) GetJobData(jobAndUnix string) (*CronJob, bool) {
+	temp := strings.Split(jobAndUnix, "_")
+	id, err := strconv.ParseInt(temp[0], 10, 64)
+	if err != nil {
+		return nil, false
+	}
+	jobString, err := redis.String(RedisInstance().Do("HGET", "test_hash", id))
 	if err != nil {
 		return nil, false
 	}
@@ -101,20 +102,13 @@ func (jbm *JobManager) GetJobData(jobId int64) (*CronJob, bool) {
 	if err != nil {
 		return nil, false
 	}
-	return job, true
-}
-
-//计算任务的下一个执行时间点
-func (job *CronJob) CalculatorNextAt() (string, error) {
-	//处理结束后重新计算任务的下次执行时间
-	expr := cron_expression.NewExpression(job.CronExpr, job.LocationName, job.LocationOffset)
-	dst := make([]string, 0)
-	err := expr.Next(time.Now(), 1, &dst)
+	//下一个执行时间点
+	at, err := strconv.ParseInt(temp[1], 10, 64)
 	if err != nil {
-		ErrLog("任务的下次执行时间计算出错" + job.Id)
-		return "", err
+		return nil, false
 	}
-	return dst[0], nil
+	job.NextRunAt = at
+	return job, true
 }
 
 //执行任务
@@ -123,11 +117,11 @@ func (jbm *JobManager) Exec(job *CronJob) {
 		log.Println("任务超时，取消执行,并需记录日志")
 		return
 	}
-	if success := jbm.Locker.Lock(job.Id); !success {
-		//获取锁失败,跳过,说明有其他线程正在处理该任务
-		return
-	}
-	defer jbm.Locker.Unlock(job.Id)
+	//if success := jbm.Locker.Lock(job.Id); !success {
+	//	//获取锁失败,跳过,说明有其他线程正在处理该任务
+	//	return
+	//}
+	//defer jbm.Locker.Unlock(job.Id)
 	jobByteData, err := json.Marshal(*job)
 	if err != nil {
 		ErrLog("任务的格式错误:" + job.Id)
@@ -137,33 +131,39 @@ func (jbm *JobManager) Exec(job *CronJob) {
 	body, code, _ := h.SendHttp()
 	RunLog(code, string(body))
 	//处理结束后重新计算任务的下次执行时间
+	//expr := cron_expression.NewExpression(job.CronExpr, job.LocationName, job.LocationOffset)
+	//dst := make([]string, 0)
+	//err = expr.Next(time.Now(), 1, &dst)
+	//if err != nil {
+	//	ErrLog("任务的下次执行时间计算出错" + job.Id)
+	//	return
+	//}
+	//job.LastRunAt = job.NextRunAt
+	//t, err := time.Parse("2006-01-02 15:04:05", dst[0])
+	//if err != nil {
+	//	ErrLog("下次执行时间解析出错" + job.Id)
+	//	return
+	//}
+	//job.NextRunAt = t.Unix()
 	expr := cron_expression.NewExpression(job.CronExpr, job.LocationName, job.LocationOffset)
-	dst := make([]string, 0)
-	err = expr.Next(time.Now(), 1, &dst)
+	nextAt, err := expr.Next(time.Now())
 	if err != nil {
 		ErrLog("任务的下次执行时间计算出错" + job.Id)
 		return
 	}
-	job.LastRunAt = job.NextRunAt
-	t, err := time.Parse("2006-01-02 15:04:05", dst[0])
-	if err != nil {
-		ErrLog("下次执行时间解析出错" + job.Id)
-		return
-	}
-	job.NextRunAt = t.Unix()
-	_, err = RedisInstance().Do("ZADD", "test", job.NextRunAt, job.Id)
+	_, err = RedisInstance().Do("ZADD", RedisConfig.JobMeta, nextAt.Unix(), job.Id)
 	if err != nil {
 		ErrLog("ZADD error" + job.Id)
 		return
 	}
-	jobByte, err := json.Marshal(job)
-	if err != nil {
-		ErrLog("任务更新错误" + job.Id)
-		return
-	}
-	_, err = RedisInstance().Do("HSET", "test_hash", job.Id, string(jobByte))
-	if err != nil {
-		ErrLog("HSET error" + job.Id)
-		return
-	}
+	//jobByte, err := json.Marshal(job)
+	//if err != nil {
+	//	ErrLog("任务更新错误" + job.Id)
+	//	return
+	//}
+	//_, err = RedisInstance().Do("HSET", "test_hash", job.Id, string(jobByte))
+	//if err != nil {
+	//	ErrLog("HSET error" + job.Id)
+	//	return
+	//}
 }
