@@ -2,6 +2,7 @@ package gcron
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/artfoxe6/cron_expression"
 	"github.com/gomodule/redigo/redis"
 	"log"
@@ -30,28 +31,38 @@ type CronJob struct {
 type JobManager struct {
 	JobHandling chan string //等待执行的任务
 	Locker      *Lock
-	Stop        chan bool
+	Pulling     bool
 }
 
 //创建一个任务管理器
 func NewJobManager() *JobManager {
-	return &JobManager{
+	jbm := &JobManager{
 		JobHandling: make(chan string, 100),
 		Locker:      &Lock{},
-		Stop:        make(chan bool, 0),
 	}
+	//负责处理任务的协程
+	go jbm.DoJob()
+	return jbm
 }
 
 //启动任务处理
-//当节点晋升为leader时,将关闭拉取任务,已经拉取的任务会继续执行完
 func (jbm *JobManager) Start() {
-	//一个协程负责拉取任务
+	//保证当前只能有一个拉取任务的协程
+	if jbm.Pulling == true {
+		return
+	}
+	//负责拉取任务协程
 	go jbm.PullJob()
-	//一个协程负责处理任务
-	go jbm.DoJob()
 }
 
+//暂定任务处理
+func (jbm *JobManager) Stop() {
+	jbm.Pulling = false
+}
+
+//处理拉取的任务
 func (jbm *JobManager) DoJob() {
+	fmt.Println("开启处理任务")
 	for {
 		select {
 		case jobAndUnix := <-jbm.JobHandling:
@@ -67,13 +78,18 @@ func (jbm *JobManager) DoJob() {
 	}
 }
 
+//负责拉取任务协程
 //从redis中获取一个任务
 //遇到错误或者暂时没有任务,就休息1秒钟,有任务的情况下持续拉取直到没有任务或者 JobHandling 装满
 func (jbm *JobManager) PullJob() {
+	fmt.Println("开始任务拉取")
+	jbm.Pulling = true
 	for {
-		select {
-		case <-jbm.Stop:
+		if jbm.Pulling == false {
+			fmt.Println("停止任务拉取")
 			return
+		}
+		select {
 		default:
 			jobAndUnix, err := redis.String(RedisInstance().Do("SPOP", RedisConfig.Ready))
 			if err != nil || jobAndUnix == "" {
@@ -117,11 +133,6 @@ func (jbm *JobManager) Exec(job *CronJob) {
 		log.Println("任务超时，取消执行,并需记录日志")
 		return
 	}
-	//if success := jbm.Locker.Lock(job.Id); !success {
-	//	//获取锁失败,跳过,说明有其他线程正在处理该任务
-	//	return
-	//}
-	//defer jbm.Locker.Unlock(job.Id)
 	jobByteData, err := json.Marshal(*job)
 	if err != nil {
 		ErrLog("任务的格式错误:" + job.Id)
@@ -131,20 +142,6 @@ func (jbm *JobManager) Exec(job *CronJob) {
 	body, code, _ := h.SendHttp()
 	RunLog(code, string(body))
 	//处理结束后重新计算任务的下次执行时间
-	//expr := cron_expression.NewExpression(job.CronExpr, job.LocationName, job.LocationOffset)
-	//dst := make([]string, 0)
-	//err = expr.Next(time.Now(), 1, &dst)
-	//if err != nil {
-	//	ErrLog("任务的下次执行时间计算出错" + job.Id)
-	//	return
-	//}
-	//job.LastRunAt = job.NextRunAt
-	//t, err := time.Parse("2006-01-02 15:04:05", dst[0])
-	//if err != nil {
-	//	ErrLog("下次执行时间解析出错" + job.Id)
-	//	return
-	//}
-	//job.NextRunAt = t.Unix()
 	expr := cron_expression.NewExpression(job.CronExpr, job.LocationName, job.LocationOffset)
 	nextAt, err := expr.Next(time.Now())
 	if err != nil {
@@ -156,14 +153,4 @@ func (jbm *JobManager) Exec(job *CronJob) {
 		ErrLog("ZADD error" + job.Id)
 		return
 	}
-	//jobByte, err := json.Marshal(job)
-	//if err != nil {
-	//	ErrLog("任务更新错误" + job.Id)
-	//	return
-	//}
-	//_, err = RedisInstance().Do("HSET", "test_hash", job.Id, string(jobByte))
-	//if err != nil {
-	//	ErrLog("HSET error" + job.Id)
-	//	return
-	//}
 }
