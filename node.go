@@ -175,29 +175,31 @@ func (node *Node) ExistsLeader() bool {
 
 //竞选leader
 func (node *Node) ElectLeader() {
-	fmt.Println("竞选Leader")
+	fmt.Println("开始竞选Leader")
 	s, err := concurrency.NewSession(node.EtcdClient)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer func() {
-		_ = s.Close()
-	}()
+	defer func() { _ = s.Close() }()
 	e := concurrency.NewElection(s, "/election")
 	ctx, _ := context.WithTimeout(context.Background(), time.Second*5)
-	if err = e.Campaign(ctx, node.Host); err != nil {
+	if err = e.Campaign(context.TODO(), node.Host); err != nil {
 		//竞争失败或超时
 		//检查当前是否存在leader,如果已存在,就放弃竞选
 		//不存在,继续发起竞选
+		fmt.Println("竞选失败")
 		if node.ExistsLeader() == true {
+			fmt.Println("已经存在Leader")
 			return
 		} else {
+			fmt.Println("未检测到Leader，再次竞选")
 			node.ElectLeader()
 		}
 	} else {
+		fmt.Println("竞选成功")
 		//竞选成功,//将自己设置为leader
 		_, err = node.EtcdClient.Put(ctx, node.LeaderKey, node.Host, clientv3.WithLease(node.LeaseId))
-		_, _ = node.EtcdClient.Delete(ctx, "/election", clientv3.WithPrefix())
+		//_, _ = node.EtcdClient.Delete(ctx, "/election", clientv3.WithPrefix())
 		//if err == nil {
 		//node.IsLeader = true
 		//node.LeaderHost = node.Host
