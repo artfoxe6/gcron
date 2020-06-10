@@ -8,6 +8,7 @@ import (
 	"github.com/coreos/etcd/mvcc/mvccpb"
 	"github.com/gomodule/redigo/redis"
 	"log"
+	"strconv"
 	"time"
 )
 
@@ -68,10 +69,12 @@ func (node *Node) RegisterEtcd() {
 	key := node.NodePrefix + node.Host
 	value := time.Now().Format("2006-01-02 15:04:05")
 	ctx, _ := context.WithTimeout(context.Background(), time.Second*3)
-	_, err := node.EtcdClient.Put(ctx, key, value, clientv3.WithLease(node.LeaseId))
+	resp, err := node.EtcdClient.Put(ctx, key, value, clientv3.WithLease(node.LeaseId))
 	if err != nil {
 		log.Fatalln(err.Error())
 	}
+	fmt.Println("RevisionID:"+strconv.Itoa(int(resp.Header.Revision)))
+
 }
 
 //申请一个租约,并开启自动续租
