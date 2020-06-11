@@ -55,6 +55,8 @@ func StartNewNode(host string, etcdNodes []string) {
 	node.ApplyLeaseAndKeepAlive()
 	//注册到etcd
 	node.RegisterEtcd()
+	//保持健康检测
+	node.KeepHealthy()
 	//node.UpdateNodeList()
 	//监听leader,如果不存在leader,参与leader竞选
 	node.ListenLeader()
@@ -73,7 +75,7 @@ func (node *Node) RegisterEtcd() {
 	if err != nil {
 		log.Fatalln(err.Error())
 	}
-	fmt.Println("RevisionID:"+strconv.Itoa(int(resp.Header.Revision)))
+	fmt.Println("RevisionID:" + strconv.Itoa(int(resp.Header.Revision)))
 
 }
 
@@ -190,7 +192,7 @@ func (node *Node) ElectLeader() {
 		//竞争失败或超时
 		//检查当前是否存在leader,如果已存在,就放弃竞选
 		//不存在,继续发起竞选
-		fmt.Println("竞选失败")
+		fmt.Println("竞选错误")
 		if node.ExistsLeader() == true {
 			fmt.Println("已经存在Leader")
 			return
@@ -199,17 +201,18 @@ func (node *Node) ElectLeader() {
 			node.ElectLeader()
 		}
 	} else {
-		fmt.Println("竞选成功")
-		//竞选成功,//将自己设置为leader
-		_, err = node.EtcdClient.Put(ctx, node.LeaderKey, node.Host, clientv3.WithLease(node.LeaseId))
-		//_, _ = node.EtcdClient.Delete(ctx, "/election", clientv3.WithPrefix())
-		//if err == nil {
-		//node.IsLeader = true
-		//node.LeaderHost = node.Host
-		//node.Schedule()
-		//停止任务执行
-		//go node.JobManager.Stop()
-		//}
+		fmt.Println("竞选结束")
+		leader, err := e.Leader(ctx)
+		if err != nil {
+			fmt.Printf("Leader() returned non nil err: %s", err)
+		}
+		if string(leader.Kvs[0].Value) == node.Host && node.ExistsLeader() == false {
+			fmt.Println("竞选成功:" + string(leader.Kvs[0].Value))
+			//竞选成功,//将自己设置为leader
+			_, err = node.EtcdClient.Put(ctx, node.LeaderKey, node.Host, clientv3.WithLease(node.LeaseId))
+		} else {
+			fmt.Println("竞选失败")
+		}
 	}
 }
 
@@ -264,6 +267,31 @@ func (node *Node) Schedule() {
 					}
 					_, _ = RedisInstance().Do("SADD", args...)
 				}
+			}
+		}
+	}()
+}
+
+//保持健康检测，断开重联，每30s检测一次是否断开 Etcd Server
+func (node *Node) KeepHealthy() {
+	go func() {
+		ticker := time.NewTicker(time.Second * 30)
+		for {
+			select {
+			case <-ticker.C:
+				fmt.Println("健康检测")
+				key := node.NodePrefix + node.Host
+				ctx, _ := context.WithTimeout(context.Background(), time.Second*3)
+				resp, err := node.EtcdClient.Get(ctx, key)
+				if err == nil {
+					//断开重联
+					if len(resp.Kvs) == 0 {
+						fmt.Println("正在断开重联")
+						go node.RegisterEtcd()
+					}
+				}
+			default:
+				time.Sleep(time.Second * 5)
 			}
 		}
 	}()
