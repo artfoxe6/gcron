@@ -14,42 +14,40 @@ import (
 
 //服务节点
 type Node struct {
-	EtcdClient *clientv3.Client
-	Host       string           //Host 用于rpc通讯
-	LeaseId    clientv3.LeaseID //租约id
-	LeaseTTL   int64            //租约时间
-	LeaderKey  string
-	//LeaderHost string
-	//IsLeader       bool
-	NodePrefix string
-	Ticker     *time.Ticker
-	JobManager *JobManager
-	NodeList   []string //节点列表
-	Scheduling bool
-	End        chan bool
+	ETCDClient      *clientv3.Client //etcd客户端
+	Host            string           //Host 用于rpc通讯
+	LeaseId         clientv3.LeaseID //租约id
+	LeaseTTL        int64            //租约时间
+	LeaderKey       string           //Leader Key
+	NodePrefix      string           //Node Prefix
+	Ticker          *time.Ticker     //Ticker
+	JobManager      *JobManager      //任务管理器
+	NodeList        []string         //节点列表
+	Scheduling      bool             //调度器状态
+	Close           chan bool        //关闭节点
+	SingleNodeModel bool             //单机模式
 }
 
 //启动一个节点
-//StartNewNode(os.Args[1], os.Args[2:])
-//StartNewNode("localhost:9090", []string{"localhost:2379", "localhost:22379", "localhost:32379"})
 func StartNewNode(host string, etcdNodes []string) {
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints:   etcdNodes,
 		DialTimeout: 5 * time.Second,
 	})
 	if err != nil {
-		log.Fatalln(err.Error())
+		log.Fatalln("无法连接到ETCD服务")
 	}
 	node := Node{
-		EtcdClient: cli,
-		Host:       host,
-		LeaseTTL:   1,
-		NodePrefix: "/nodes/",
-		LeaderKey:  "/leader",
-		JobManager: NewJobManager(),
-		NodeList:   make([]string, 0),
-		End:        make(chan bool, 0),
-		Scheduling: false,
+		ETCDClient:      cli,
+		Host:            host,
+		LeaseTTL:        1,
+		NodePrefix:      "/nodes/",
+		LeaderKey:       "/leader",
+		JobManager:      NewJobManager(),
+		NodeList:        make([]string, 0),
+		Close:           make(chan bool, 0),
+		Scheduling:      false,
+		SingleNodeModel: false,
 	}
 	//申请一个租约,并开启自动续租
 	node.ApplyLeaseAndKeepAlive()
@@ -57,12 +55,12 @@ func StartNewNode(host string, etcdNodes []string) {
 	node.RegisterEtcd()
 	//保持健康检测
 	node.KeepHealthy()
-	//node.UpdateNodeList()
 	//监听leader,如果不存在leader,参与leader竞选
-	node.ListenLeader()
-	//node.ListenNodeList()
+	node.WatchLeader()
+	//观察节点变化
+	node.WatchNodeList()
 	//node.JobManager.Start()
-	<-node.End
+	<-node.Close
 }
 
 //注册到etcd
@@ -71,7 +69,7 @@ func (node *Node) RegisterEtcd() {
 	key := node.NodePrefix + node.Host
 	value := time.Now().Format("2006-01-02 15:04:05")
 	ctx, _ := context.WithTimeout(context.Background(), time.Second*3)
-	resp, err := node.EtcdClient.Put(ctx, key, value, clientv3.WithLease(node.LeaseId))
+	resp, err := node.ETCDClient.Put(ctx, key, value, clientv3.WithLease(node.LeaseId))
 	if err != nil {
 		log.Fatalln(err.Error())
 	}
@@ -83,12 +81,12 @@ func (node *Node) RegisterEtcd() {
 func (node *Node) ApplyLeaseAndKeepAlive() {
 	fmt.Println("申请租约")
 	ctx, _ := context.WithTimeout(context.Background(), time.Second*3)
-	resp, err := node.EtcdClient.Grant(ctx, node.LeaseTTL)
+	resp, err := node.ETCDClient.Grant(ctx, node.LeaseTTL)
 	if err != nil {
 		log.Fatalln(err.Error())
 	}
 	node.LeaseId = resp.ID
-	ch, err := node.EtcdClient.KeepAlive(context.TODO(), resp.ID)
+	ch, err := node.ETCDClient.KeepAlive(context.TODO(), resp.ID)
 	if err != nil {
 		log.Fatalln(err.Error())
 	}
@@ -96,11 +94,11 @@ func (node *Node) ApplyLeaseAndKeepAlive() {
 }
 
 //监听leader
-func (node *Node) ListenLeader() {
+func (node *Node) WatchLeader() {
 	fmt.Println("监听Leader节点")
 	//node.GetLeaderHost()
 	go func() {
-		rch := node.EtcdClient.Watch(context.TODO(), node.LeaderKey, clientv3.WithPrefix())
+		rch := node.ETCDClient.Watch(context.TODO(), node.LeaderKey, clientv3.WithPrefix())
 		for wresp := range rch {
 			for _, ev := range wresp.Events {
 				fmt.Println("Leader节点发生变化:", ev.Type)
@@ -116,6 +114,8 @@ func (node *Node) ListenLeader() {
 						node.Schedule()
 						//停止任务执行
 						go node.JobManager.Stop()
+						//检查是否启动单节点模式
+						node.CheckSingleNodeModel()
 					}
 				}
 				//监听到leader失效,开始竞选leader
@@ -137,11 +137,35 @@ func (node *Node) ListenLeader() {
 }
 
 //监听节点列表
-func (node *Node) ListenNodeList() {
-	rch := node.EtcdClient.Watch(context.TODO(), node.NodePrefix, clientv3.WithPrefix())
+func (node *Node) WatchNodeList() {
+	rch := node.ETCDClient.Watch(context.TODO(), node.NodePrefix, clientv3.WithPrefix())
 	for wresp := range rch {
 		if len(wresp.Events) > 0 {
-			node.UpdateNodeList()
+			fmt.Println("node列表发生变化")
+			//非Leader无需处理节点变化
+			if node.Scheduling == false {
+				fmt.Println("不处理")
+				continue
+			}
+			node.CheckSingleNodeModel()
+		}
+	}
+}
+
+//检查节点列表
+func (node *Node) CheckSingleNodeModel() {
+	node.UpdateNodeList()
+	fmt.Println(node.NodeList)
+	if len(node.NodeList) == 0 {
+		//切换到单机模式
+		node.SingleNodeModel = true
+		fmt.Println("未检测到worker节点，启动单节点模式")
+		node.JobManager.Start()
+	} else {
+		if node.SingleNodeModel {
+			node.SingleNodeModel = false
+			fmt.Println("退出单节点模式")
+			node.JobManager.Stop()
 		}
 	}
 }
@@ -149,7 +173,7 @@ func (node *Node) ListenNodeList() {
 //获取leader的host
 func (node *Node) GetLeaderHost() string {
 	ctx, _ := context.WithTimeout(context.Background(), time.Second*3)
-	resp, err := node.EtcdClient.Get(ctx, node.LeaderKey)
+	resp, err := node.ETCDClient.Get(ctx, node.LeaderKey)
 	if err != nil {
 		log.Fatalln(err.Error())
 	}
@@ -166,7 +190,7 @@ func (node *Node) GetLeaderHost() string {
 func (node *Node) ExistsLeader() bool {
 	fmt.Print("检查Leader是否存在")
 	ctx, _ := context.WithTimeout(context.Background(), time.Second*3)
-	resp, err := node.EtcdClient.Get(ctx, node.LeaderKey)
+	resp, err := node.ETCDClient.Get(ctx, node.LeaderKey)
 	if err != nil {
 		log.Fatalln(err.Error())
 	}
@@ -181,7 +205,7 @@ func (node *Node) ExistsLeader() bool {
 //竞选leader
 func (node *Node) ElectLeader() {
 	fmt.Println("开始竞选Leader")
-	s, err := concurrency.NewSession(node.EtcdClient)
+	s, err := concurrency.NewSession(node.ETCDClient)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -209,7 +233,7 @@ func (node *Node) ElectLeader() {
 		if string(leader.Kvs[0].Value) == node.Host && node.ExistsLeader() == false {
 			fmt.Println("竞选成功:" + string(leader.Kvs[0].Value))
 			//竞选成功,//将自己设置为leader
-			_, err = node.EtcdClient.Put(ctx, node.LeaderKey, node.Host, clientv3.WithLease(node.LeaseId))
+			_, err = node.ETCDClient.Put(ctx, node.LeaderKey, node.Host, clientv3.WithLease(node.LeaseId))
 		} else {
 			fmt.Println("竞选失败")
 		}
@@ -219,7 +243,7 @@ func (node *Node) ElectLeader() {
 //获取可用节点
 func (node *Node) UpdateNodeList() {
 	ctx, _ := context.WithTimeout(context.Background(), time.Second*3)
-	resp, err := node.EtcdClient.Get(ctx, node.NodePrefix, clientv3.WithPrefix())
+	resp, err := node.ETCDClient.Get(ctx, node.NodePrefix, clientv3.WithPrefix())
 	if err != nil {
 		log.Fatalln(err.Error())
 	}
@@ -249,7 +273,7 @@ func (node *Node) Schedule() {
 			}
 			select {
 			case <-node.Ticker.C:
-				fmt.Println(time.Now().Format("2006-01-02 15:04:05"))
+				fmt.Println("调度" + time.Now().Format("2006-01-02 15:04:05"))
 				//每一分钟触发一次任务调度,将需要执行的任务id放到Rpc服务的ReadyJobChan通道中,等待节点来取
 				if time.Now().Second() == 0 {
 					unix := time.Now().Unix()
@@ -282,7 +306,7 @@ func (node *Node) KeepHealthy() {
 				fmt.Println("健康检测")
 				key := node.NodePrefix + node.Host
 				ctx, _ := context.WithTimeout(context.Background(), time.Second*3)
-				resp, err := node.EtcdClient.Get(ctx, key)
+				resp, err := node.ETCDClient.Get(ctx, key)
 				if err == nil {
 					//断开重联
 					if len(resp.Kvs) == 0 {

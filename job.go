@@ -13,8 +13,7 @@ import (
 
 //定时任务
 type CronJob struct {
-	CronExpr string //定时任务cron表达式
-	//LastRunAt      int64                  //上次执行时间点 单位时间戳
+	CronExpr       string                 //定时任务cron表达式
 	NextRunAt      int64                  //下次执行时间点 单位时间戳
 	TTL            int64                  //任务能忍受的超时时间
 	Id             string                 //任务唯一标识
@@ -91,6 +90,7 @@ func (jbm *JobManager) PullJob() {
 		}
 		select {
 		default:
+			fmt.Println("拉取任务")
 			jobAndUnix, err := redis.String(RedisInstance().Do("SPOP", RedisConfig.Ready))
 			if err != nil || jobAndUnix == "" {
 				time.Sleep(time.Second)
