@@ -36,9 +36,13 @@ Go语言实现的 **高可用** **分布式** 定时任务系统 <br />
  <br />![节点启动流程图](https://raw.githubusercontent.com/artfoxe6/gcron/master/images/node.png)
 
 # 启动
+    利用goreman（bin目录中已提供）启动一个etcd集群，假设启动三个节点的集群，端口分别为：
+    127.0.0.1:2379 127.0.0.1:22379 127.0.0.1:32379
+    启动redis,mongodb
+    运行方式：
     go run main/main.go 节点运行端口 若干etcd节点 
 ```
-go run main/main.go 127.0.0.1:9001 27.0.0.1:2379 27.0.0.1:22379 27.0.0.1:32379
+go run main/main.go 127.0.0.1:9001 127.0.0.1:2379 127.0.0.1:22379 127.0.0.1:32379
 ```
 
 
